@@ -8,7 +8,10 @@
 
 export const config = {
   // Same-origin: the browser hits Traefik -> orchestrator. Override for local dev.
-  apiBase: process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1",
+  // On the server side (SSR), we must hit the internal Docker service to avoid NAT loopback timeouts.
+  apiBase: typeof window === "undefined" 
+    ? (process.env.INTERNAL_API_URL ?? "http://orchestrator:8000") 
+    : (process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1"),
 
   oidc: {
     issuer: process.env.NEXT_PUBLIC_OIDC_ISSUER ?? "",
