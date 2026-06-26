@@ -1,0 +1,138 @@
+# Presentation Notebook LLM — full stack. Works the same on local Windows (Docker Desktop)
+# and on the VPS later. Fill deploy/.env (see .env.example) before `docker compose up -d`.
+#
+# Isolation model: only `traefik` publishes a port (80). Engines, db, cache and storage
+# publish NO host ports, so nothing is reachable from outside — but they can still reach
+# the internet (needed: Open Notebook / Presenton call the DeepSeek API). Do NOT mark the
+# app network `internal: true` or the engines lose outbound and LLM calls fail.
+
+name: presentation-notebook-llm
+
+networks:
+  edge:        # public-facing: only traefik + the two public apps
+  appnet:      # internal app traffic + egress to LLM APIs; no published ports
+
+volumes:
+  pg_data:
+  surreal_data:
+  minio_data:
+  notebook_data:
+  presenton_data:
+  ollama_data:
+
+services:
+  traefik:
+    image: traefik:v3
+    command:
+      - "--providers.docker=true"
+      - "--providers.docker.exposedbydefault=false"
+      - "--entrypoints.web.address=:80"
+    ports: ["80:80"]
+    volumes: ["/var/run/docker.sock:/var/run/docker.sock:ro"]
+    networks: [edge]
+
+  frontend:
+    build: ../frontend
+    env_file: .env
+    depends_on: [orchestrator]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.frontend.rule=PathPrefix(`/`)"
+    networks: [edge, appnet]
+
+  orchestrator:
+    build: ../backend
+    env_file: .env
+    depends_on: [postgres, redis, minio, open-notebook, presenton]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.api.rule=PathPrefix(`/api`)"
+    networks: [edge, appnet]
+    # Local debugging only — uncomment to hit the API directly from the host:
+    # ports: ["8000:8000"]
+
+  worker:
+    build: ../backend
+    command: ["arq", "src.workers.WorkerSettings"]
+    env_file: .env
+    depends_on: [postgres, redis, minio, open-notebook, presenton]
+    networks: [appnet]
+
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes: ["pg_data:/var/lib/postgresql/data"]
+    networks: [appnet]
+    restart: always
+
+  redis:
+    image: redis:7
+    networks: [appnet]
+    restart: always
+
+  minio:
+    image: minio/minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    volumes: ["minio_data:/data"]
+    networks: [appnet]
+    restart: always
+    # Local debugging only — MinIO console:
+    # ports: ["9001:9001"]
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes: ["ollama_data:/root/.ollama"]
+    networks: [appnet]
+    restart: always
+    # After `up`, pull the embedding model once:
+    #   docker compose exec ollama ollama pull bge-m3
+
+  # --- Internal engines (no published ports; reachable only by the orchestrator) ---
+  surrealdb:
+    image: surrealdb/surrealdb:v2
+    command: start --user ${SURREAL_USER} --pass ${SURREAL_PASSWORD} rocksdb:/mydata/db.db
+    user: root
+    volumes: ["surreal_data:/mydata"]
+    networks: [appnet]
+    restart: always
+
+  open-notebook:
+    image: lfnovo/open_notebook:v1-latest
+    environment:
+      OPEN_NOTEBOOK_ENCRYPTION_KEY: ${OPEN_NOTEBOOK_ENCRYPTION_KEY}
+      SURREAL_URL: ws://surrealdb:8000/rpc
+      SURREAL_USER: ${SURREAL_USER}
+      SURREAL_PASSWORD: ${SURREAL_PASSWORD}
+      SURREAL_NAMESPACE: ${SURREAL_NAMESPACE}
+      SURREAL_DATABASE: ${SURREAL_DATABASE}
+    volumes: ["notebook_data:/app/data"]
+    depends_on: [surrealdb, ollama]
+    networks: [appnet]
+    restart: always
+    # Local only — to reach Open Notebook's UI/API to configure providers the first time:
+    # ports: ["8502:8502", "5055:5055"]
+
+  presenton:
+    image: ghcr.io/presenton/presenton:latest
+    environment:
+      LLM: "custom"                          # DeepSeek via OpenAI-compatible endpoint
+      CUSTOM_LLM_URL: ${DEEPSEEK_BASE_URL}
+      CUSTOM_LLM_API_KEY: ${DEEPSEEK_API_KEY}
+      CUSTOM_MODEL: ${DEEPSEEK_MODEL}
+      IMAGE_PROVIDER: ${IMAGE_PROVIDER}
+      PEXELS_API_KEY: ${PEXELS_API_KEY}
+      CAN_CHANGE_KEYS: ${PRESENTON_CAN_CHANGE_KEYS}
+      AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME}
+      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD}
+    volumes: ["presenton_data:/app_data"]
+    depends_on: [ollama]
+    networks: [appnet]
+    restart: always
+    # Local only — to reach Presenton's UI/API directly:
+    # ports: ["5000:80"]

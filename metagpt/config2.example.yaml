@@ -1,0 +1,34 @@
+# MetaGPT config — copy to ~/.metagpt/config2.yaml and fill in your key.
+# DeepSeek is OpenAI-compatible. Two equivalent ways to configure it:
+
+# --- Option A: dedicated deepseek provider ---
+llm:
+  api_type: "deepseek"
+  base_url: "https://api.deepseek.com/v1"
+  api_key: "YOUR_DEEPSEEK_API_KEY"
+  model: "deepseek-chat"        # V3 (general codegen). Use "deepseek-reasoner" (R1) for harder design tasks.
+  # temperature: 0.2            # keep low for consistent, deterministic output
+
+# --- Option B: OpenAI-compatible (use if your MetaGPT version lacks api_type: deepseek) ---
+# llm:
+#   api_type: "openai"
+#   base_url: "https://api.deepseek.com/v1"
+#   api_key: "YOUR_DEEPSEEK_API_KEY"
+#   model: "deepseek-chat"
+
+# Optional: cap spend / repair behavior
+# repair_llm_output: true
+
+# --- Per-role models (Claude plans, DeepSeek codes) ---
+# MetaGPT's config2.yaml sets ONE global llm; per-role models are assigned in code.
+# If you use MetaGPT for greenfield scaffolding and want the multi-model split, use a
+# short Python runner that overrides each role's llm, e.g.:
+#
+#   from metagpt.config2 import Config
+#   from metagpt.roles import ProductManager, Architect, ProjectManager, Engineer, QaEngineer
+#   claude   = Config.from_llm_config({"api_type":"anthropic","model":"claude-sonnet-4-5","api_key":"..."})
+#   deepseek = Config.from_llm_config({"api_type":"deepseek","base_url":"https://api.deepseek.com/v1","model":"deepseek-chat","api_key":"..."})
+#   team brains (PM/Architect/QA) -> claude ; Engineer -> deepseek
+#
+# For an evolving repo the simpler path is Aider's architect/editor split — see
+# ../automation/AUTOMATION-PIPELINE.md. Treat MetaGPT as optional first-draft scaffolding.

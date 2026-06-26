@@ -1,0 +1,20 @@
+# Aider config for the multi-model build loop. Copy to your code repo as `.aider.conf.yml`.
+# Architect (planning) = Claude; Editor (coding) = DeepSeek.
+# Keys come from env: ANTHROPIC_API_KEY and DEEPSEEK_API_KEY (see .env.example).
+
+# Architect/editor split
+architect: true
+model: anthropic/claude-sonnet-4-5      # reasoning / planning model (Claude)
+editor-model: deepseek/deepseek-chat    # code-writing model (DeepSeek); use deepseek-reasoner for harder edits
+
+# Test-driven loop: let the editor run and fix tests automatically
+test-cmd: "pytest -q"
+auto-test: true
+
+# Safer defaults for gated, reviewable work
+auto-commits: true        # Aider commits each change (on your slice branch)
+gitignore: true
+dark-mode: true
+
+# Keep edits scoped — add only the files a slice touches when you start aider, e.g.:
+#   aider backend/src/api/sources.py backend/src/workers/ingest.py
