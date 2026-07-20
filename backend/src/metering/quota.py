@@ -70,6 +70,10 @@ class QuotaService:
 
     def enforce(self, *, actor_user_id: uuid.UUID | None, alert_sink: AlertSink) -> bool:
         """Return True if allowed. Records + alerts (and may raise) when exceeded."""
+        # Lite mode is single-tenant with no metering: never block a generation.
+        if get_settings().lite_mode:
+            return True
+
         status = self.status()
         if status.unlimited or status.used_this_month < status.monthly_limit:
             return True

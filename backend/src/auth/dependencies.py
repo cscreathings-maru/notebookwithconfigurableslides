@@ -12,8 +12,10 @@ from fastapi import Depends, Request
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from ..core.config import get_settings
 from ..core.db import get_db
 from ..core.errors import UnauthorizedError
+from ..core.lite import build_default_principal
 from ..models import Tenant, TenantStatus, User, UserStatus
 from .oidc import validate_token
 from .principal import Principal
@@ -31,6 +33,17 @@ def get_current_principal(
     request: Request,
     db: Session = Depends(get_db),
 ) -> Principal:
+    settings = get_settings()
+    # Lite mode: single-tenant demo with no auth. Skip token parsing and the
+    # user/tenant lookup entirely; every request runs as the fixed default admin.
+    # The default tenant/user rows are created by the lite seed step so endpoints
+    # that read the Tenant (e.g. /auth/me) still resolve.
+    if settings.lite_mode:
+        return build_default_principal(
+            tenant_slug=settings.default_tenant_slug,
+            user_email=settings.default_user_email,
+        )
+
     token = _extract_bearer(request)
     claims = validate_token(token)
     subject = claims["sub"]

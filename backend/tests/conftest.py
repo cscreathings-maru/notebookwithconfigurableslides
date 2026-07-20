@@ -19,6 +19,10 @@ os.environ.update(
     DATABASE_URL=f"sqlite+pysqlite:///{_TMP_DB}",
     ORCH_SECRET_KEY="test-secret-key",
     OIDC_DEV_MODE="true",
+    # This suite validates the full multi-tenant SaaS path (auth, RBAC, tenant
+    # isolation, metering). Lite mode bypasses those, so pin it off here; the
+    # lite bypass is a deployment toggle, exercised separately.
+    LITE_MODE="false",
     ENVIRONMENT="test",
     LOG_LEVEL="WARNING",
 )

@@ -14,6 +14,7 @@ from fastapi import Depends
 
 from ..auth.dependencies import get_current_principal
 from ..auth.principal import Principal
+from ..core.config import get_settings
 from ..core.errors import ForbiddenError
 from ..models import UserRole
 
@@ -33,6 +34,11 @@ def require_role(minimum: UserRole) -> Callable[..., Principal]:
     """Build a dependency that admits only principals with at least `minimum` role."""
 
     def _dependency(principal: Principal = Depends(get_current_principal)) -> Principal:
+        # Lite mode: the default principal is admin and outranks every gate, but
+        # skip the check explicitly so intent is clear and role config can't lock
+        # the demo out. Full RBAC is enforced whenever LITE_MODE is off.
+        if get_settings().lite_mode:
+            return principal
         if not has_at_least(principal.role, minimum):
             raise ForbiddenError(
                 f"Requires '{minimum.value}' role; '{principal.role.value}' is insufficient.",

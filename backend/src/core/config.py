@@ -26,6 +26,28 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO")
     public_base_url: str = Field(default="http://localhost:3000", alias="PUBLIC_BASE_URL")
 
+    # --- Lite mode (single-tenant demo build) ---
+    # When true: auth/RBAC are bypassed behind their existing interfaces, every
+    # request runs as the fixed default admin below, quotas are not enforced, and
+    # the LLM provider config is read from the OpenRouter env vars instead of the
+    # per-tenant BYOK record. Flip to false to restore the full multi-tenant SaaS.
+    lite_mode: bool = Field(default=True, alias="LITE_MODE")
+    default_tenant_slug: str = Field(default="demo", alias="DEFAULT_TENANT_SLUG")
+    default_tenant_name: str = Field(default="Demo Workspace", alias="DEFAULT_TENANT_NAME")
+    default_user_email: str = Field(default="demo@local", alias="DEFAULT_USER_EMAIL")
+
+    # --- OpenRouter (lite-mode LLM for outline / analysis / generation) ---
+    # Single source of truth for the OpenRouter swap. Chat-completions only —
+    # embeddings are served elsewhere (see Open Notebook config). Set the exact
+    # model slug here (e.g. the DeepSeek variant you intend to demo).
+    openrouter_base_url: str = Field(
+        default="https://openrouter.ai/api/v1", alias="OPENROUTER_BASE_URL"
+    )
+    openrouter_api_key: str = Field(default="", alias="OPENROUTER_API_KEY")
+    openrouter_model: str = Field(
+        default="deepseek/deepseek-chat-v3", alias="OPENROUTER_MODEL"
+    )
+
     # Master secret used to derive the BYOK encryption key and sign dev tokens.
     orch_secret_key: str = Field(default="dev-insecure-change-me", alias="ORCH_SECRET_KEY")
 

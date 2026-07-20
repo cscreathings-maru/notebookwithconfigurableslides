@@ -12,6 +12,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from ..core.config import get_settings
 from ..core.crypto import decrypt_json, encrypt_json
 from ..core.errors import NotFoundError
 from ..models import Tenant
@@ -40,7 +41,21 @@ class TenantLlmConfigService:
         self.db.flush()
 
     def get_config(self) -> dict[str, Any]:
-        """Decrypt and return the full provider config (server-side use only)."""
+        """Decrypt and return the full provider config (server-side use only).
+
+        Lite mode ignores the per-tenant BYOK record entirely and returns a single
+        global OpenRouter config from the environment — the one place the whole
+        stack's outline/analysis/generation LLM is pointed at OpenRouter.
+        """
+        settings = get_settings()
+        if settings.lite_mode:
+            return {
+                "provider": "openrouter",
+                "base_url": settings.openrouter_base_url,
+                "model": settings.openrouter_model,
+                "api_key": settings.openrouter_api_key,
+            }
+
         tenant = self._tenant()
         if not tenant.llm_config_enc:
             raise NotFoundError("Tenant has no LLM provider configured.")

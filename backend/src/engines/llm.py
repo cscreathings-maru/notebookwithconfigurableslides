@@ -49,10 +49,16 @@ class LlmClient:
             "response_format": {"type": "json_object"},
         }
 
+        # OpenRouter uses HTTP-Referer / X-Title for app attribution in its
+        # dashboard; other OpenAI-compatible providers simply ignore them.
         client = self._client or httpx.AsyncClient(
             base_url=base_url.rstrip("/"),
             timeout=settings.engine_timeout_seconds,
-            headers={"Authorization": f"Bearer {api_key}"},
+            headers={
+                "Authorization": f"Bearer {api_key}",
+                "HTTP-Referer": settings.public_base_url,
+                "X-Title": settings.app_name,
+            },
         )
         owns = self._client is None
         try:

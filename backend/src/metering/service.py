@@ -27,6 +27,10 @@ def _tenant_rates(db: Session, tenant_id: uuid.UUID) -> tuple[Decimal, Decimal]:
     settings = get_settings()
     in_rate = Decimal(str(settings.default_input_cost_per_1k))
     out_rate = Decimal(str(settings.default_output_cost_per_1k))
+    # Lite mode has no per-tenant pricing; use the configured defaults and skip the
+    # provider-config lookup entirely so cost estimation never depends on BYOK.
+    if settings.lite_mode:
+        return in_rate, out_rate
     try:
         config = TenantLlmConfigService(db, tenant_id).get_config()
     except Exception:  # no provider configured yet -> defaults
