@@ -9,6 +9,7 @@
 import { useEffect, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 
+import { config } from "@/lib/config";
 import { useAuth } from "@/components/AuthProvider";
 import { Nav } from "@/components/Nav";
 
@@ -17,6 +18,8 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   const router = useRouter();
 
   useEffect(() => {
+    // Lite mode has no login page to fall back to; the session is always present.
+    if (config.liteMode) return;
     if (!loading && (error === "unauthenticated" || !me)) {
       router.replace("/login");
     }

@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 
+import { config } from "@/lib/config";
 import { useAuth } from "@/components/AuthProvider";
 import { visibleNav } from "@/lib/nav";
 
@@ -35,13 +36,15 @@ export function Nav() {
         ))}
       </ul>
 
-      <button
-        type="button"
-        onClick={signOut}
-        className="mt-auto rounded-lg px-3 py-2 text-left text-sm text-ink/60 transition-colors hover:bg-ink/5 hover:text-ink"
-      >
-        Sign out
-      </button>
+      {!config.liteMode && (
+        <button
+          type="button"
+          onClick={signOut}
+          className="mt-auto rounded-lg px-3 py-2 text-left text-sm text-ink/60 transition-colors hover:bg-ink/5 hover:text-ink"
+        >
+          Sign out
+        </button>
+      )}
     </nav>
   );
 }

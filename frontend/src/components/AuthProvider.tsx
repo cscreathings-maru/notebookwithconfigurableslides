@@ -10,6 +10,7 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 
+import { config } from "@/lib/config";
 import { api, ApiError, type Me } from "@/services/api";
 import { clearToken } from "@/services/session";
 
@@ -22,12 +23,28 @@ interface AuthState {
 
 const AuthContext = createContext<AuthState | undefined>(undefined);
 
+// Static admin session used in lite mode — no /auth/me fetch, no token, no login.
+const LITE_ME: Me = {
+  user: { id: "lite", email: "demo@local", role: "admin", status: "active" },
+  tenant: {
+    id: "lite",
+    name: config.liteTenantName,
+    slug: "demo",
+    status: "active",
+    region: null,
+  },
+  role: "admin",
+};
+
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [me, setMe] = useState<Me | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [me, setMe] = useState<Me | null>(config.liteMode ? LITE_ME : null);
+  const [loading, setLoading] = useState(!config.liteMode);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
+    // Lite mode: the session is static; never call the auth endpoint.
+    if (config.liteMode) return;
+
     let active = true;
     api
       .me()
@@ -47,6 +64,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const signOut = () => {
+    // No auth to sign out of in lite mode.
+    if (config.liteMode) return;
     clearToken();
     window.location.href = "/login";
   };

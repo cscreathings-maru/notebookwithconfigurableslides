@@ -10,7 +10,7 @@ export const config = {
   // Same-origin: the browser hits Traefik -> orchestrator. Override for local dev.
   // On the server side (SSR), we must hit the internal Docker service to avoid NAT loopback timeouts.
   apiBase: typeof window === "undefined" 
-    ? (process.env.INTERNAL_API_URL ?? "http://orchestrator:8000") 
+    ? (process.env.INTERNAL_API_URL ?? "http://orchestrator:8000/api/v1") 
     : (process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1"),
 
   oidc: {
@@ -23,4 +23,11 @@ export const config = {
   // Enables the local dev token form on the login page (pairs with backend
   // OIDC_DEV_MODE). Never enable in production.
   devMode: process.env.NEXT_PUBLIC_DEV_MODE === "true",
+
+  // Lite mode: single-tenant demo with no auth. The shell runs as a static admin
+  // session (no /auth/me fetch, no login wall). Pairs with the backend LITE_MODE.
+  liteMode: process.env.NEXT_PUBLIC_LITE_MODE === "true",
+
+  // Display name for the lite default workspace (mirrors backend DEFAULT_TENANT_NAME).
+  liteTenantName: process.env.NEXT_PUBLIC_DEFAULT_TENANT_NAME ?? "Demo Workspace",
 } as const;
