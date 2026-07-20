@@ -1,4 +1,9 @@
 .DS_Store
 .vscode/
 .idea/
+
+# Never commit real environment files — only the *.example templates.
 deploy/.env
+deploy/.env.*
+!deploy/.env.example
+!deploy/.env.lite.example
