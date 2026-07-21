@@ -24,6 +24,10 @@ FROM node:20-slim AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 ENV PORT=3000
+# Next.js standalone binds to HOSTNAME; default it to all interfaces so the
+# container is reachable from the reverse proxy (otherwise it may bind localhost
+# only and every proxied request times out).
+ENV HOSTNAME=0.0.0.0
 
 # Standalone output bundles only what the server needs.
 COPY --from=builder /app/.next/standalone ./
