@@ -47,6 +47,20 @@ class Settings(BaseSettings):
     openrouter_model: str = Field(
         default="deepseek/deepseek-chat-v3", alias="OPENROUTER_MODEL"
     )
+    # Curated model slugs offered in the Studio model dropdown (CSV). The default
+    # OPENROUTER_MODEL is always included even if omitted here.
+    openrouter_models: str = Field(
+        default="deepseek/deepseek-chat-v3,openai/gpt-4o-mini,anthropic/claude-3.5-sonnet,google/gemini-flash-1.5",
+        alias="OPENROUTER_MODELS",
+    )
+
+    @property
+    def openrouter_model_list(self) -> list[str]:
+        """De-duplicated dropdown models, with the active default first."""
+        items = [m.strip() for m in self.openrouter_models.split(",") if m.strip()]
+        ordered = [self.openrouter_model] + [m for m in items if m != self.openrouter_model]
+        seen: set[str] = set()
+        return [m for m in ordered if not (m in seen or seen.add(m))]
 
     # Master secret used to derive the BYOK encryption key and sign dev tokens.
     orch_secret_key: str = Field(default="dev-insecure-change-me", alias="ORCH_SECRET_KEY")

@@ -1,9 +1,11 @@
-"""Presenton (generation engine) client — STUB.
+"""Presenton (generation engine) client.
 
-Typed method surface only; param mapping and generation land in Slice 3. HTTP Basic
-auth (single admin account) is engine-internal defense-in-depth, NOT a tenant
-boundary — isolation is enforced in the orchestrator. Resilience is inherited from
-EngineClient. Engine ids (presentation_id, edit_path) stay server-side.
+Issues real requests through EngineClient (timeout, retry on 5xx/429, breaker).
+HTTP Basic auth is engine-internal defense-in-depth, not a tenant boundary. Response
+shapes are parsed defensively (Presenton versions vary on id/path key names) and
+non-2xx raises a clear EngineError with a body snippet. Engine ids/paths stay
+server-side. NOTE: the exact /api/v1/ppt/* contract should be verified against the
+running image's /openapi.json (Phase 0) — mismatches surface as EngineError here.
 """
 
 from __future__ import annotations
@@ -11,7 +13,11 @@ from __future__ import annotations
 from typing import Any
 
 from ..core.config import get_settings
+from ..core.errors import EngineError
+from ..core.logging import get_logger
 from .base import EngineClient
+
+logger = get_logger("orchestrator.presenton")
 
 
 class PresentonClient(EngineClient):
@@ -25,41 +31,37 @@ class PresentonClient(EngineClient):
         )
 
     async def health(self) -> bool:
-        """Liveness probe — the one method wired through the real transport."""
+        """Liveness probe."""
         response = await self.request("GET", "/health")
         return response.status_code == 200
 
-    async def upload_files(self, *, file_paths: list[str]) -> list[str]:
-        """POST /api/v1/ppt/files/upload; returns engine file refs."""
-        resp = await self.request(
-            "POST", "/api/v1/ppt/files/upload", json={"files": file_paths}
-        )
-        body = resp.json()
-        return list(body.get("file_refs", []))
-
     async def generate(self, *, params: dict[str, Any]) -> dict[str, Any]:
-        """POST /api/v1/ppt/presentation/generate.
-
-        Returns {presentation_id, path, edit_path}. The orchestrator pulls the file
-        from `path`; `edit_path` is internal-only and never surfaced to clients.
-        """
+        """POST /api/v1/ppt/presentation/generate → {presentation_id, path}."""
         resp = await self.request(
             "POST", "/api/v1/ppt/presentation/generate", json=params
         )
-        return resp.json()
+        self._ensure_ok(resp, "generate")
+        body = resp.json()
+        return {
+            "presentation_id": self._first(body, "presentation_id", "id", "presentationId"),
+            "path": self._first(body, "path", "url", "download_url", "file_url"),
+        }
 
     async def export(self, *, presentation_id: str, target_format: str) -> dict[str, Any]:
-        """Export an existing presentation to another format (e.g. pdf); returns {path}."""
+        """Export an existing presentation to another format; returns {path}."""
         resp = await self.request(
             "POST",
             "/api/v1/ppt/presentation/export",
             json={"presentation_id": presentation_id, "export_as": target_format},
         )
-        return resp.json()
+        self._ensure_ok(resp, "export")
+        body = resp.json()
+        return {"path": self._first(body, "path", "url", "download_url", "file_url")}
 
     async def download(self, *, path: str) -> bytes:
         """Fetch the produced artifact bytes from the engine-returned path."""
         resp = await self.request("GET", path)
+        self._ensure_ok(resp, "download")
         return resp.content
 
     async def register_template(
@@ -68,22 +70,28 @@ class PresentonClient(EngineClient):
         name: str,
         source_pptx_path: str | None = None,
     ) -> str:
-        """Register/import a tenant-namespaced template; returns presenton_template_ref.
-
-        With `source_pptx_path` the engine imports/generates a template from the PPTX
-        (fetched via the presigned URL); otherwise it registers a named template. The
-        returned ref is stored server-side and never exposed to clients.
-        """
+        """Register/import a template; returns presenton_template_ref (server-side)."""
         payload: dict[str, Any] = {"name": name}
         if source_pptx_path is not None:
             payload["source_pptx_url"] = source_pptx_path
-        resp = await self.request(
-            "POST", "/api/v1/ppt/template/import", json=payload
-        )
+        resp = await self.request("POST", "/api/v1/ppt/template/import", json=payload)
+        self._ensure_ok(resp, "register_template")
         body = resp.json()
-        ref = body.get("template_id") or body.get("id") or body.get("template")
-        if not isinstance(ref, str) or not ref:
-            from ..core.errors import EngineError
-
+        ref = self._first(body, "template_id", "id", "template")
+        if not ref:
             raise EngineError("Presenton template import returned no template ref.")
         return ref
+
+    @staticmethod
+    def _ensure_ok(resp: Any, op: str) -> None:
+        if resp.status_code >= 400:
+            snippet = getattr(resp, "text", "")[:200]
+            raise EngineError(f"Presenton {op} failed ({resp.status_code}): {snippet}")
+
+    @staticmethod
+    def _first(body: dict[str, Any], *keys: str) -> str:
+        for key in keys:
+            value = body.get(key)
+            if isinstance(value, str) and value:
+                return value
+        raise EngineError(f"Presenton response missing any of {keys}.")

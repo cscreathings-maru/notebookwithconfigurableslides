@@ -39,11 +39,16 @@ class Generation(UuidPkMixin, Base):
     )
     outline_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
 
-    # Provenance: the exact registry versions this generation pinned.
-    profile_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
-    profile_version: Mapped[int] = mapped_column(Integer, nullable=False)
-    template_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False, index=True)
-    template_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Provenance: the exact registry versions this generation pinned. Nullable
+    # because freeform (NotebookLM-style) decks are not governed by a profile.
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
+    profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_id: Mapped[uuid.UUID | None] = mapped_column(
+        Uuid(as_uuid=True), nullable=True, index=True
+    )
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     model: Mapped[str | None] = mapped_column(String(128), nullable=True)
     provider: Mapped[str | None] = mapped_column(String(128), nullable=True)

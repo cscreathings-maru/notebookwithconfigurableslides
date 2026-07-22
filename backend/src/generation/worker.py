@@ -71,6 +71,20 @@ async def generate_presentation(
         db.add(gen)
         db.flush()
 
+    # Freeform (NotebookLM) decks have no governing profile — there is nothing to
+    # check consistency against, so publish once artifacts exist.
+    if gen.profile_id is None:
+        gen.status = GenerationStatus.ready
+        gen.consistency_report = {"passed": True, "checks": [], "mode": "freeform"}
+        gen.error = None
+        db.add(gen)
+        db.flush()
+        logger.info(
+            "generation_finished",
+            extra={"generation_id": str(generation_id), "status": gen.status.value},
+        )
+        return
+
     # Consistency gate — judge the deck that was actually produced, not the plan.
     gen.status = GenerationStatus.validating
     db.add(gen)

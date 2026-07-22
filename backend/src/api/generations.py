@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, Query, status
 from ..auth.principal import Principal
 from ..core.config import get_settings
 from ..core.errors import NotFoundError, ValidationError
+from ..generation.freeform_service import FreeformGenerationService
 from ..generation.repository import GenerationRepository
 from ..generation.service import GenerationService
 from ..models import Generation, GenerationStatus
@@ -24,7 +25,12 @@ from ..schemas.generation import (
 )
 from ..storage.object_store import ObjectStore
 from ..tenancy.rbac import require_author, require_viewer
-from .deps import get_generation_repository, get_generation_service, get_object_store
+from .deps import (
+    get_freeform_generation_service,
+    get_generation_repository,
+    get_generation_service,
+    get_object_store,
+)
 
 router = APIRouter(tags=["generations"])
 
@@ -39,6 +45,7 @@ _PUBLIC_PARAM_KEYS = frozenset(
         "include_title_slide",
         "include_table_of_contents",
         "export_as",
+        "web_search",
     }
 )
 
@@ -77,10 +84,22 @@ async def create_generation(
     payload: GenerationCreate,
     principal: Principal = Depends(require_author),
     service: GenerationService = Depends(get_generation_service),
+    freeform_service: FreeformGenerationService = Depends(get_freeform_generation_service),
 ) -> GenerationResponse:
-    generation = await service.create(
-        project_id=project_id, outline_id=payload.outline_id, created_by=principal.user_id
-    )
+    # Freeform (NotebookLM Studio) path when a content source is chosen; otherwise
+    # the governed outline path.
+    if payload.content_source is not None:
+        generation = await freeform_service.create(
+            project_id=project_id, payload=payload, created_by=principal.user_id
+        )
+    elif payload.outline_id is not None:
+        generation = await service.create(
+            project_id=project_id,
+            outline_id=payload.outline_id,
+            created_by=principal.user_id,
+        )
+    else:
+        raise ValidationError("Provide either content_source (freeform) or outline_id.")
     return _to_response(generation)
 
 
