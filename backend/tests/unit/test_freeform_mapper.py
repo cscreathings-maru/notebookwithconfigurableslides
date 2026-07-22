@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from src.generation.freeform_mapper import build_freeform_request
+from src.generation.freeform_mapper import build_freeform_request, split_custom_slides
 
 
 def test_freeform_request_carries_all_knobs() -> None:
@@ -22,14 +22,16 @@ def test_freeform_request_carries_all_knobs() -> None:
     assert params["verbosity"] == "concise"
     assert params["web_search"] is True
     assert params["export_as"] == "pdf"
+    # Presenton wants a language name, not an ISO code.
+    assert params["language"] == "English"
     # Non-custom sources do not force a fixed slides markdown structure.
     assert "slides_markdown" not in params
-    assert "template" not in params
+    assert "template" not in params  # defaults to Presenton's "general"
 
 
-def test_freeform_custom_markdown_drives_structure_and_template() -> None:
+def test_freeform_custom_markdown_is_split_into_slide_array() -> None:
     params = build_freeform_request(
-        content="## Slide One\n- point",
+        content="## Slide One\n- point\n\n---\n\n## Slide Two\n- another",
         content_source="custom",
         tone="casual",
         density="standard",
@@ -38,8 +40,15 @@ def test_freeform_custom_markdown_drives_structure_and_template() -> None:
         web_search=False,
         export_as="pptx",
     )
-    assert params["slides_markdown"] == "## Slide One\n- point"
+    # slides_markdown is a string[] — one entry per slide.
+    assert params["slides_markdown"] == ["## Slide One\n- point", "## Slide Two\n- another"]
     assert params["template"] == "tmpl_ref_123"
+
+
+def test_split_custom_slides_falls_back_to_headings_then_whole() -> None:
+    assert split_custom_slides("## A\n- x\n## B\n- y") == ["## A\n- x", "## B\n- y"]
+    assert split_custom_slides("just one block") == ["just one block"]
+    assert split_custom_slides("   ") == []
 
 
 def test_model_dropdown_puts_active_default_first_and_dedupes() -> None:

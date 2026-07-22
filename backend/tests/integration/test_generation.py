@@ -172,7 +172,8 @@ async def test_full_pipeline_to_ready_and_download(
     ).json()
     assert detail["status"] == "ready"
     assert detail["consistency_report"]["passed"] is True
-    assert detail["artifacts"] == {"pptx": True, "pdf": True}
+    # Presenton returns one file per call; the governed path requests pptx.
+    assert detail["artifacts"] == {"pptx": True, "pdf": False}
     assert "presenton_presentation_id" not in detail
     assert "pptx_uri" not in detail
 

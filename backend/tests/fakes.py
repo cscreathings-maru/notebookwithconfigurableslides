@@ -85,6 +85,7 @@ class FakeLlm:
     def __init__(self) -> None:
         self._call = 0
         self.calls: list[str] = []
+        self.chat_models: list[str | None] = []
 
     async def talking_points(self, *, section_ids, context, profile, provider_config):
         from src.outline.builder import LlmResult
@@ -94,12 +95,38 @@ class FakeLlm:
         points = {sid: [f"point {sid} run{self._call}"] for sid in section_ids}
         return LlmResult(points_by_section=points, tokens_in=120, tokens_out=80)
 
+    async def chat(
+        self,
+        *,
+        system: str,
+        user: str,
+        provider_config: dict[str, Any],
+        history: list[dict[str, str]] | None = None,
+        temperature: float = 0.3,
+        max_tokens: int = 1200,
+        model_override: str | None = None,
+    ):
+        """Grounded completion fake. Returns a JSON question array when the prompt
+        asks for questions, otherwise a plain grounded answer/summary."""
+        from src.engines.llm import ChatAnswer
 
-def _pptx_from_markdown(content: str, slides_markdown: str, n_slides: int) -> bytes:
+        self.calls.append("chat")
+        self.chat_models.append(model_override or provider_config.get("model"))
+        if "JSON" in system or "question" in system.lower():
+            text = '["What drove revenue growth?", "What are the key risks?", "What is the outlook?"]'
+        else:
+            text = "Grounded overview: revenue grew 12% YoY based on the sources."
+        return ChatAnswer(text=text, tokens_in=100, tokens_out=50)
+
+
+def _pptx_from_markdown(content: str, slides_markdown: Any, n_slides: int) -> bytes:
     """Build a REAL PPTX from the orchestrator's params so the artifact-level
     consistency checker has a genuine deck to inspect: a title slide plus one slide
     per `## ` heading (title) with its `- ` bullets as body text. The total is padded
-    to `n_slides` so the fake honors the requested count the way Presenton does."""
+    to `n_slides` so the fake honors the requested count the way Presenton does.
+
+    `slides_markdown` is Presenton's string[] (one block per slide); a bare string
+    is tolerated for older callers."""
     import io
 
     from pptx import Presentation
@@ -111,8 +138,9 @@ def _pptx_from_markdown(content: str, slides_markdown: str, n_slides: int) -> by
     title_slide = prs.slides.add_slide(title_layout)
     title_slide.shapes.title.text = content or "Presentation"
 
+    blocks = slides_markdown if isinstance(slides_markdown, list) else [slides_markdown or ""]
     current_body: Any = None
-    for raw in slides_markdown.splitlines():
+    for raw in "\n".join(blocks).splitlines():
         line = raw.strip()
         if line.startswith("## "):
             slide = prs.slides.add_slide(body_layout)
@@ -149,18 +177,18 @@ class FakePresenton:
     async def generate(self, *, params: dict[str, Any]) -> dict[str, Any]:
         self.generate_calls.append(params)
         pid = f"pres_{len(self.generate_calls)}"
-        path = f"/app_data/{pid}.pptx"
-        self.files[path] = _pptx_from_markdown(
-            params.get("content", ""),
-            params.get("slides_markdown", ""),
-            int(params.get("n_slides", 0)),
-        )
+        export_as = str(params.get("export_as", "pptx")).lower()
+        path = f"/app_data/{pid}.{export_as}"
+        # Presenton returns one file in the requested format per generate call.
+        if export_as == "pdf":
+            self.files[path] = b"%PDF-1.4 fake-pdf"
+        else:
+            self.files[path] = _pptx_from_markdown(
+                params.get("content", ""),
+                params.get("slides_markdown", ""),
+                int(params.get("n_slides", 0)),
+            )
         return {"presentation_id": pid, "path": path, "edit_path": f"/edit/{pid}"}
-
-    async def export(self, *, presentation_id: str, target_format: str) -> dict[str, Any]:
-        path = f"/app_data/{presentation_id}.{target_format}"
-        self.files[path] = b"%PDF-1.4 fake-pdf"
-        return {"path": path}
 
     async def download(self, *, path: str) -> bytes:
         return self.files.get(path, b"")

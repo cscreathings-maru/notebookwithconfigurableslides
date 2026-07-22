@@ -177,8 +177,9 @@ async def test_edit_then_regenerate_does_not_reingest(
     with SessionLocal() as db:
         g1 = db.get(Generation, uuid.UUID(gen1["id"]))
         g2 = db.get(Generation, uuid.UUID(gen2["id"]))
-        assert EDIT_MARKER in g2.params["slides_markdown"]
-        assert EDIT_MARKER not in g1.params["slides_markdown"]
+        # slides_markdown is Presenton's string[] (one block per slide).
+        assert EDIT_MARKER in "\n".join(g2.params["slides_markdown"])
+        assert EDIT_MARKER not in "\n".join(g1.params["slides_markdown"])
 
 
 async def test_history_exposes_full_provenance(

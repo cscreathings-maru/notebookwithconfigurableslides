@@ -20,8 +20,12 @@ def _instructions(profile: StakeholderProfile) -> str:
     return str(cfg)
 
 
-def _slides_markdown(outline: OutlineContent) -> str:
-    """One markdown block per section (in order) with its talking points as bullets."""
+def _slides_markdown(outline: OutlineContent) -> list[str]:
+    """One markdown block per section (in order), bullets = talking points.
+
+    Presenton's `slides_markdown` is a string[] — one entry per slide — so the
+    engine renders the fixed sections in order rather than re-inventing structure.
+    """
     points_by_section: dict[str, list[str]] = {}
     for tp in outline.talking_points:
         points_by_section.setdefault(tp.section_id, []).append(tp.text)
@@ -32,7 +36,7 @@ def _slides_markdown(outline: OutlineContent) -> str:
         for text in points_by_section.get(section.id, []):
             lines.append(f"- {text}")
         blocks.append("\n".join(lines))
-    return "\n\n".join(blocks)
+    return blocks
 
 
 def _content_brief(profile: StakeholderProfile, outline: OutlineContent) -> str:

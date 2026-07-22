@@ -76,10 +76,12 @@ def test_mapping_fixes_structure_from_outline() -> None:
     assert params["include_title_slide"] is True
     assert params["export_as"] == "pptx"
 
-    # slides_markdown pins section order — Introduction before Results before Risks.
+    # slides_markdown is a string[] (one block per slide) pinning section order.
     md = params["slides_markdown"]
-    assert md.index("Introduction") < md.index("Results") < md.index("Risks")
-    assert "Revenue up 12%" in md  # talking points carried through
+    assert isinstance(md, list)
+    joined = "\n\n".join(md)
+    assert joined.index("Introduction") < joined.index("Results") < joined.index("Risks")
+    assert "Revenue up 12%" in joined  # talking points carried through
 
     # n_slides stays within the profile's range.
     assert 6 <= params["n_slides"] <= 10

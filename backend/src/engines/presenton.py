@@ -1,11 +1,15 @@
 """Presenton (generation engine) client.
 
 Issues real requests through EngineClient (timeout, retry on 5xx/429, breaker).
-HTTP Basic auth is engine-internal defense-in-depth, not a tenant boundary. Response
-shapes are parsed defensively (Presenton versions vary on id/path key names) and
-non-2xx raises a clear EngineError with a body snippet. Engine ids/paths stay
-server-side. NOTE: the exact /api/v1/ppt/* contract should be verified against the
-running image's /openapi.json (Phase 0) — mismatches surface as EngineError here.
+HTTP Basic auth (admin user/pass, same as the web UI) is engine-internal
+defense-in-depth, not a tenant boundary. Response shapes are parsed defensively
+(cloud returns absolute URLs; self-hosted returns relative paths like /app_data/…,
+resolved against base_url) and non-2xx raises a clear EngineError. Engine ids/paths
+stay server-side.
+
+Matches the self-hosted contract: POST /api/v1/ppt/presentation/generate returns
+one file in the requested export_as (pptx|pdf) — there is no separate export
+endpoint, so callers pick the format up front.
 """
 
 from __future__ import annotations
@@ -46,17 +50,6 @@ class PresentonClient(EngineClient):
             "presentation_id": self._first(body, "presentation_id", "id", "presentationId"),
             "path": self._first(body, "path", "url", "download_url", "file_url"),
         }
-
-    async def export(self, *, presentation_id: str, target_format: str) -> dict[str, Any]:
-        """Export an existing presentation to another format; returns {path}."""
-        resp = await self.request(
-            "POST",
-            "/api/v1/ppt/presentation/export",
-            json={"presentation_id": presentation_id, "export_as": target_format},
-        )
-        self._ensure_ok(resp, "export")
-        body = resp.json()
-        return {"path": self._first(body, "path", "url", "download_url", "file_url")}
 
     async def download(self, *, path: str) -> bytes:
         """Fetch the produced artifact bytes from the engine-returned path."""

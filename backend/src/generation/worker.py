@@ -50,23 +50,24 @@ async def generate_presentation(
     db.add(gen)
     db.flush()
 
-    # Produce + persist artifacts (skip if a prior attempt already did — resumable).
+    # Produce + persist the artifact (skip if a prior attempt already did — resumable).
+    # Presenton's generate returns a single file in the requested `export_as` format;
+    # there is no separate export endpoint in the self-hosted API, so we honor the
+    # chosen format and store exactly that artifact.
     if not gen.presenton_presentation_id:
         result = await presenton.generate(params=gen.params)
         gen.presenton_presentation_id = result["presentation_id"]
 
-        pptx_bytes = await presenton.download(path=result["path"])
-        pptx_key = _artifact_key(tenant_id, gen, "pptx")
-        object_store.put_bytes(key=pptx_key, data=pptx_bytes, content_type=_PPTX_TYPE)
-        gen.pptx_uri = pptx_key
-
-        pdf = await presenton.export(
-            presentation_id=gen.presenton_presentation_id, target_format="pdf"
-        )
-        pdf_bytes = await presenton.download(path=pdf["path"])
-        pdf_key = _artifact_key(tenant_id, gen, "pdf")
-        object_store.put_bytes(key=pdf_key, data=pdf_bytes, content_type=_PDF_TYPE)
-        gen.pdf_uri = pdf_key
+        file_bytes = await presenton.download(path=result["path"])
+        export_as = str(gen.params.get("export_as", "pptx")).lower()
+        if export_as == "pdf":
+            pdf_key = _artifact_key(tenant_id, gen, "pdf")
+            object_store.put_bytes(key=pdf_key, data=file_bytes, content_type=_PDF_TYPE)
+            gen.pdf_uri = pdf_key
+        else:
+            pptx_key = _artifact_key(tenant_id, gen, "pptx")
+            object_store.put_bytes(key=pptx_key, data=file_bytes, content_type=_PPTX_TYPE)
+            gen.pptx_uri = pptx_key
 
         db.add(gen)
         db.flush()
