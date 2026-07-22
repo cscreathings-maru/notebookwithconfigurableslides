@@ -20,7 +20,9 @@ const ROLE_RANK: Record<Role, number> = { viewer: 0, author: 1, admin: 2 };
 
 export const NAV_ITEMS: NavItem[] = [
   { href: "/projects", label: "Projects", minRole: "viewer" },
-  { href: "/profiles", label: "Profiles", minRole: "admin" },
+  // Profiles drive the governed outline pipeline, which the freeform lite demo
+  // does not use — hide it there. Templates stay for custom deck themes.
+  { href: "/profiles", label: "Profiles", minRole: "admin", hideInLite: true },
   { href: "/templates", label: "Templates", minRole: "admin" },
   { href: "/usage", label: "Usage & Audit", minRole: "admin", hideInLite: true },
   { href: "/settings/llm", label: "LLM Provider", minRole: "admin", hideInLite: true },

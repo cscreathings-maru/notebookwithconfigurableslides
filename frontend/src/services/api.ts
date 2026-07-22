@@ -178,8 +178,8 @@ export interface Generation {
   project_id: string | null;
   outline_id: string | null;
   status: GenerationStatus;
-  profile_version: number;
-  template_version: number;
+  profile_version: number | null;
+  template_version: number | null;
   model: string | null;
   provider: string | null;
   params: Record<string, unknown>;
@@ -225,6 +225,54 @@ export interface AuditEvent {
   created_at: string;
 }
 
+// --- NotebookLM-style: guide, chat, studio ---
+
+export type GuideStatus = "pending" | "ready" | "failed";
+
+export interface Guide {
+  project_id: string;
+  summary: string | null;
+  suggested_questions: string[];
+  status: GuideStatus;
+  error: string | null;
+  updated_at: string;
+}
+
+export type ChatRole = "user" | "assistant";
+
+export interface Citation {
+  source_ref: string | null;
+  snippet: string;
+}
+
+export interface ChatMessage {
+  id: string;
+  role: ChatRole;
+  content: string;
+  citations: Citation[];
+  created_at: string;
+}
+
+export interface ModelOption {
+  id: string;
+  default: boolean;
+}
+
+export type ContentSource = "summary" | "notebook" | "chat" | "custom";
+
+export interface DeckConfig {
+  content_source: ContentSource;
+  custom_markdown?: string;
+  chat_message_id?: string;
+  tone: Tone;
+  density: Verbosity;
+  n_slides: number;
+  template_id?: string | null;
+  web_search: boolean;
+  model?: string;
+  export_as: "pptx" | "pdf";
+}
+
 function rangeQuery(from?: string, to?: string): string {
   const params = new URLSearchParams();
   if (from) params.set("from", from);
@@ -266,11 +314,34 @@ export const api = {
   updateOutline: (id: string, content: OutlineContent) =>
     request<Outline>(`/outlines/${id}`, { method: "PUT", body: JSON.stringify({ content }) }),
 
+  // --- Guide (auto notebook overview) ---
+  getGuide: (projectId: string) => request<Guide>(`/projects/${projectId}/guide`),
+  regenerateGuide: (projectId: string) =>
+    request<Guide>(`/projects/${projectId}/guide`, { method: "POST" }),
+
+  // --- Chat with sources (RAG + citations) ---
+  listChat: (projectId: string) =>
+    request<ChatMessage[]>(`/projects/${projectId}/chat`),
+  sendChat: (projectId: string, question: string) =>
+    request<ChatMessage>(`/projects/${projectId}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ question }),
+    }),
+
+  // --- Models (OpenRouter dropdown) ---
+  listModels: () => request<ModelOption[]>("/models"),
+
   // --- Generation ---
   createGeneration: (projectId: string, outlineId: string) =>
     request<Generation>(`/projects/${projectId}/generations`, {
       method: "POST",
       body: JSON.stringify({ outline_id: outlineId }),
+    }),
+  // Freeform (Studio) deck generation with per-deck config.
+  generateDeck: (projectId: string, config: DeckConfig) =>
+    request<Generation>(`/projects/${projectId}/generations`, {
+      method: "POST",
+      body: JSON.stringify(config),
     }),
   getGeneration: (id: string) => request<Generation>(`/generations/${id}`),
   listGenerations: (projectId: string) =>
