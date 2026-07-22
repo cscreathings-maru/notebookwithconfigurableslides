@@ -12,12 +12,17 @@ from sqlalchemy.orm import Session
 
 from ..auth.dependencies import get_current_principal
 from ..auth.principal import Principal
+from ..chat.repository import ChatRepository
+from ..chat.service import ChatService
 from ..core.db import get_db
 from ..engines.llm import LlmClient
 from ..engines.open_notebook import OpenNotebookClient
 from ..engines.presenton import PresentonClient
+from ..generation.freeform_service import FreeformGenerationService
 from ..generation.repository import GenerationRepository
 from ..generation.service import GenerationService
+from ..guide.repository import GuideRepository
+from ..guide.service import GuideService
 from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..ingestion.service import ProjectService, SourceService
 from ..jobs.repository import JobRepository
@@ -186,6 +191,41 @@ def get_outline_service(
     )
 
 
+# --- Guide + Chat (NotebookLM-style) ---
+
+
+def get_guide_repository(
+    principal: Principal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> GuideRepository:
+    return GuideRepository(db, principal.tenant_id)
+
+
+def get_guide_service(
+    repo: GuideRepository = Depends(get_guide_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    on_client: OpenNotebookClient = Depends(get_open_notebook_client),
+    llm: LlmClient = Depends(get_llm_client),
+) -> GuideService:
+    return GuideService(repo=repo, project_repo=project_repo, on_client=on_client, llm=llm)
+
+
+def get_chat_repository(
+    principal: Principal = Depends(get_current_principal),
+    db: Session = Depends(get_db),
+) -> ChatRepository:
+    return ChatRepository(db, principal.tenant_id)
+
+
+def get_chat_service(
+    repo: ChatRepository = Depends(get_chat_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    on_client: OpenNotebookClient = Depends(get_open_notebook_client),
+    llm: LlmClient = Depends(get_llm_client),
+) -> ChatService:
+    return ChatService(repo=repo, project_repo=project_repo, on_client=on_client, llm=llm)
+
+
 def get_generation_service(
     gen_repo: GenerationRepository = Depends(get_generation_repository),
     outline_repo: OutlineRepository = Depends(get_outline_repository),
@@ -203,4 +243,28 @@ def get_generation_service(
         template_repo=template_repo,
         job_service=job_service,
         alert_sink=alert_sink,
+    )
+
+
+def get_freeform_generation_service(
+    gen_repo: GenerationRepository = Depends(get_generation_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    source_repo: SourceRepository = Depends(get_source_repository),
+    guide_repo: GuideRepository = Depends(get_guide_repository),
+    chat_repo: ChatRepository = Depends(get_chat_repository),
+    template_repo: TemplateRepository = Depends(get_template_repository),
+    on_client: OpenNotebookClient = Depends(get_open_notebook_client),
+    llm: LlmClient = Depends(get_llm_client),
+    job_service: JobService = Depends(get_job_service),
+) -> FreeformGenerationService:
+    return FreeformGenerationService(
+        gen_repo=gen_repo,
+        project_repo=project_repo,
+        source_repo=source_repo,
+        guide_repo=guide_repo,
+        chat_repo=chat_repo,
+        template_repo=template_repo,
+        on_client=on_client,
+        llm=llm,
+        job_service=job_service,
     )

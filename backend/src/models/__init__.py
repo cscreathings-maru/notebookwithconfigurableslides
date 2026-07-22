@@ -1,7 +1,9 @@
 """SQLAlchemy models. Every table except `tenant` carries a `tenant_id`."""
 
 from .base import Base
+from .chat import ChatMessage, ChatRole
 from .generation import Generation, GenerationStatus
+from .guide import GuideStatus, NotebookGuide
 from .job import Job, JobStatus, JobType
 from .outline import Outline
 from .project import Project
@@ -40,4 +42,8 @@ __all__ = [
     "GenerationStatus",
     "Outline",
     "UsageRecord",
+    "NotebookGuide",
+    "GuideStatus",
+    "ChatMessage",
+    "ChatRole",
 ]
