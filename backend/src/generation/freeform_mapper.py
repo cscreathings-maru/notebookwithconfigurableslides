@@ -12,8 +12,9 @@ from __future__ import annotations
 import re
 from typing import Any
 
-# Presenton expects a language *name*, not an ISO code.
-DEFAULT_LANGUAGE = "English"
+# Presenton expects a language *name*, not an ISO code. This is only a safety net —
+# the service always passes an explicit language (settings.default_language).
+DEFAULT_LANGUAGE = "Bahasa Indonesia"
 
 # A line that is exactly `---` (optionally padded) separates custom slides.
 _SLIDE_SEPARATOR = re.compile(r"^\s*---\s*$", re.MULTILINE)

@@ -11,6 +11,7 @@ from __future__ import annotations
 import json
 import uuid
 
+from ..core.config import get_settings
 from ..core.errors import ValidationError
 from ..core.logging import get_logger
 from ..ingestion.repository import ProjectRepository
@@ -34,11 +35,14 @@ class GuideService:
         self.project_repo.get(project_id)  # 404 across tenants
         return self.repo.get_by_project(project_id)
 
-    async def generate(self, *, project_id: uuid.UUID) -> NotebookGuide:
+    async def generate(
+        self, *, project_id: uuid.UUID, language: str | None = None
+    ) -> NotebookGuide:
         project = self.project_repo.get(project_id)
         if not project.on_notebook_id:
             raise ValidationError("Project has no notebook yet.")
 
+        language = language or get_settings().default_language
         provider_config = TenantLlmConfigService(self.repo.db, self.repo.tenant_id).get_config()
 
         snippets = await self.on_client.search(
@@ -56,7 +60,7 @@ class GuideService:
                 system=(
                     "You are a research assistant. Write a clear, well-structured overview "
                     "(3-6 short paragraphs) of the provided source material. Ground every "
-                    "claim in the material; do not invent facts."
+                    f"claim in the material; do not invent facts. Write in {language}."
                 ),
                 user=f"Source excerpts:\n{grounding}\n\nWrite the overview.",
                 provider_config=provider_config,
@@ -65,7 +69,7 @@ class GuideService:
             )
         ).text
 
-        questions = await self._suggested_questions(grounding, provider_config)
+        questions = await self._suggested_questions(grounding, provider_config, language)
 
         guide = self.repo.get_by_project(project_id)
         if guide is None:
@@ -80,10 +84,13 @@ class GuideService:
         logger.info("guide_generated", extra={"project_id": str(project_id)})
         return guide
 
-    async def _suggested_questions(self, grounding: str, provider_config: dict) -> list[str]:
+    async def _suggested_questions(
+        self, grounding: str, provider_config: dict, language: str
+    ) -> list[str]:
         answer = await self.llm.chat(
             system=(
                 "You suggest starter questions a reader could ask about the sources. "
+                f"Write the questions in {language}. "
                 f"Return STRICT JSON: an array of exactly {_SUGGESTED_COUNT} short question "
                 'strings, e.g. ["...", "..."]. No prose, JSON only.'
             ),

@@ -39,6 +39,8 @@ class GenerationCreate(BaseModel):
     web_search: bool = False
     model: str | None = None
     export_as: Literal["pptx", "pdf"] = "pptx"
+    # AI output language NAME (e.g. "Bahasa Indonesia"); None → server default.
+    language: str | None = None
 
 
 class ArtifactAvailability(BaseModel):

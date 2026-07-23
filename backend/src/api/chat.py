@@ -46,5 +46,7 @@ async def ask_chat(
     _: Principal = Depends(require_author),
     service: ChatService = Depends(get_chat_service),
 ) -> ChatMessageResponse:
-    assistant = await service.ask(project_id=project_id, question=payload.question)
+    assistant = await service.ask(
+        project_id=project_id, question=payload.question, language=payload.language
+    )
     return _to_response(assistant)

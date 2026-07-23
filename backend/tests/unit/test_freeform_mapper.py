@@ -22,11 +22,26 @@ def test_freeform_request_carries_all_knobs() -> None:
     assert params["verbosity"] == "concise"
     assert params["web_search"] is True
     assert params["export_as"] == "pdf"
-    # Presenton wants a language name, not an ISO code.
-    assert params["language"] == "English"
+    # Presenton wants a language name, not an ISO code; default targets Indonesian.
+    assert params["language"] == "Bahasa Indonesia"
     # Non-custom sources do not force a fixed slides markdown structure.
     assert "slides_markdown" not in params
     assert "template" not in params  # defaults to Presenton's "general"
+
+
+def test_freeform_request_honors_explicit_language() -> None:
+    params = build_freeform_request(
+        content="A brief.",
+        content_source="summary",
+        tone="professional",
+        density="standard",
+        n_slides=6,
+        template_ref=None,
+        web_search=False,
+        export_as="pptx",
+        language="English",
+    )
+    assert params["language"] == "English"
 
 
 def test_freeform_custom_markdown_is_split_into_slide_array() -> None:

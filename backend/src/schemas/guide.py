@@ -10,6 +10,11 @@ from pydantic import BaseModel
 from ..models import GuideStatus
 
 
+class GuideRegenerate(BaseModel):
+    # AI output language NAME (e.g. "Bahasa Indonesia"); None → server default.
+    language: str | None = None
+
+
 class GuideResponse(BaseModel):
     project_id: uuid.UUID
     summary: str | None

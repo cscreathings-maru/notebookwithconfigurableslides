@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import uuid
 
+from ..core.config import get_settings
 from ..core.logging import get_logger
 from ..ingestion.repository import ProjectRepository
 from ..models import ChatMessage, ChatRole
@@ -32,8 +33,11 @@ class ChatService:
         self.project_repo.get(project_id)  # 404 across tenants
         return self.repo.list_by_project(project_id)
 
-    async def ask(self, *, project_id: uuid.UUID, question: str) -> ChatMessage:
+    async def ask(
+        self, *, project_id: uuid.UUID, question: str, language: str | None = None
+    ) -> ChatMessage:
         project = self.project_repo.get(project_id)
+        language = language or get_settings().default_language
         provider_config = TenantLlmConfigService(self.repo.db, self.repo.tenant_id).get_config()
 
         snippets = []
@@ -48,7 +52,8 @@ class ChatService:
             system=(
                 "You answer questions strictly from the provided source excerpts. "
                 "If the answer is not in the sources, say you don't have enough "
-                "information. Be concise and cite facts to the sources."
+                "information. Be concise and cite facts to the sources. "
+                f"Respond in {language}."
             ),
             user=(
                 f"Source excerpts:\n{grounding or '(no relevant excerpts found)'}\n\n"

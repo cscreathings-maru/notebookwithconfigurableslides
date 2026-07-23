@@ -14,7 +14,7 @@ from ..auth.principal import Principal
 from ..core.errors import NotFoundError
 from ..guide.service import GuideService
 from ..models import NotebookGuide
-from ..schemas.guide import GuideResponse
+from ..schemas.guide import GuideRegenerate, GuideResponse
 from ..tenancy.rbac import require_author, require_viewer
 from .deps import get_guide_service
 
@@ -47,8 +47,10 @@ def get_guide(
 @router.post("/projects/{project_id}/guide", response_model=GuideResponse)
 async def generate_guide(
     project_id: uuid.UUID,
+    payload: GuideRegenerate | None = None,
     _: Principal = Depends(require_author),
     service: GuideService = Depends(get_guide_service),
 ) -> GuideResponse:
-    guide = await service.generate(project_id=project_id)
+    language = payload.language if payload else None
+    guide = await service.generate(project_id=project_id, language=language)
     return _to_response(project_id, guide)

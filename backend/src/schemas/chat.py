@@ -12,6 +12,8 @@ from ..models import ChatRole
 
 class ChatAsk(BaseModel):
     question: str = Field(..., min_length=1, max_length=4000)
+    # AI response language NAME (e.g. "Bahasa Indonesia"); None → server default.
+    language: str | None = None
 
 
 class Citation(BaseModel):

@@ -62,6 +62,20 @@ class Settings(BaseSettings):
         seen: set[str] = set()
         return [m for m in ordered if not (m in seen or seen.add(m))]
 
+    # AI output language (decks via Presenton, plus the guide/chat prompts).
+    # Presenton and the prompts expect a language NAME (e.g. "Bahasa Indonesia"),
+    # never an ISO code. Default targets Indonesian users; both are configurable.
+    default_language: str = Field(default="Bahasa Indonesia", alias="DEFAULT_LANGUAGE")
+    languages: str = Field(default="Bahasa Indonesia,English", alias="LANGUAGES")
+
+    @property
+    def language_list(self) -> list[str]:
+        """De-duplicated language dropdown, with the active default first."""
+        items = [m.strip() for m in self.languages.split(",") if m.strip()]
+        ordered = [self.default_language] + [m for m in items if m != self.default_language]
+        seen: set[str] = set()
+        return [m for m in ordered if not (m in seen or seen.add(m))]
+
     # Master secret used to derive the BYOK encryption key and sign dev tokens.
     orch_secret_key: str = Field(default="dev-insecure-change-me", alias="ORCH_SECRET_KEY")
 

@@ -10,6 +10,7 @@ from . import (
     generations,
     guide,
     jobs,
+    languages,
     models,
     outlines,
     profiles,
@@ -34,3 +35,4 @@ api_v1.include_router(generations.router)
 api_v1.include_router(usage.router)
 api_v1.include_router(tenant.router)
 api_v1.include_router(models.router)
+api_v1.include_router(languages.router)

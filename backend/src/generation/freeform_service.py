@@ -10,6 +10,7 @@ from __future__ import annotations
 import uuid
 
 from ..chat.repository import ChatRepository
+from ..core.config import get_settings
 from ..core.errors import NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..guide.repository import GuideRepository
@@ -57,8 +58,11 @@ class FreeformGenerationService:
             self.gen_repo.db, self.gen_repo.tenant_id
         ).get_config()
         model = payload.model or provider_config.get("model")
+        language = payload.language or get_settings().default_language
 
-        content = await self._resolve_content(project, payload, provider_config, model)
+        content = await self._resolve_content(
+            project, payload, provider_config, model, language
+        )
 
         ready_source_ids = [
             str(s.id)
@@ -88,6 +92,7 @@ class FreeformGenerationService:
             template_ref=template_ref,
             web_search=payload.web_search,
             export_as=payload.export_as,
+            language=language,
         )
 
         generation = Generation(
@@ -119,7 +124,12 @@ class FreeformGenerationService:
         return generation
 
     async def _resolve_content(
-        self, project, payload: GenerationCreate, provider_config: dict, model: str
+        self,
+        project,
+        payload: GenerationCreate,
+        provider_config: dict,
+        model: str,
+        language: str,
     ) -> str:
         source = payload.content_source
         if source == "custom":
@@ -156,7 +166,8 @@ class FreeformGenerationService:
             answer = await self.llm.chat(
                 system=(
                     "Synthesize the source material into a well-structured brief suitable "
-                    "for a slide deck. Use clear sections and concise points."
+                    "for a slide deck. Use clear sections and concise points. "
+                    f"Write in {language}."
                 ),
                 user=grounding,
                 provider_config=provider_config,
