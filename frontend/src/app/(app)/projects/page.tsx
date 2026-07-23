@@ -4,10 +4,13 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
+import { useLocale, useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type Project } from "@/services/api";
 
 export default function ProjectsPage() {
   const { me } = useAuth();
+  const { locale } = useLocale();
+  const t = useT();
   const [projects, setProjects] = useState<Project[]>([]);
   const [name, setName] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -30,7 +33,7 @@ export default function ProjectsPage() {
       setName("");
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to create project");
+      setError(err instanceof ApiError ? err.message : t("projects.createFailed"));
     } finally {
       setBusy(false);
     }
@@ -40,11 +43,9 @@ export default function ProjectsPage() {
     <section aria-labelledby="projects-heading" className="flex flex-col gap-8">
       <header>
         <h1 id="projects-heading" className="text-2xl font-semibold text-ink">
-          Projects
+          {t("projects.title")}
         </h1>
-        <p className="mt-1 text-sm text-ink/60">
-          A project maps to a notebook. Upload sources, build an outline, then generate a deck.
-        </p>
+        <p className="mt-1 text-sm text-ink/60">{t("projects.subtitle")}</p>
       </header>
 
       {canCreate && (
@@ -53,7 +54,7 @@ export default function ProjectsPage() {
           className="flex items-end gap-3 rounded-2xl border border-ink/10 bg-white p-5"
         >
           <label className="flex flex-1 flex-col gap-1 text-sm">
-            <span className="text-ink/60">New project name</span>
+            <span className="text-ink/60">{t("projects.newName")}</span>
             <input
               required
               value={name}
@@ -66,7 +67,7 @@ export default function ProjectsPage() {
             disabled={busy}
             className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90 disabled:opacity-50"
           >
-            Create
+            {t("common.create")}
           </button>
         </form>
       )}
@@ -86,14 +87,14 @@ export default function ProjectsPage() {
             >
               <p className="font-semibold text-ink">{p.name}</p>
               <p className="mt-1 text-xs text-ink/50">
-                {new Date(p.created_at).toLocaleDateString()}
+                {new Date(p.created_at).toLocaleDateString(locale === "id" ? "id-ID" : "en-US")}
               </p>
             </Link>
           </li>
         ))}
         {projects.length === 0 && (
           <li className="col-span-2 rounded-2xl border border-dashed border-ink/15 p-10 text-center text-sm text-ink/50">
-            No projects yet.
+            {t("projects.empty")}
           </li>
         )}
       </ul>

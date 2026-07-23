@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type ChatMessage } from "@/services/api";
 
 /**
@@ -17,6 +18,7 @@ export function ChatPanel({
   pendingQuestion: string | null;
   onConsumed: () => void;
 }) {
+  const t = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,12 +62,12 @@ export function ChatPanel({
         await api.sendChat(projectId, q);
         await load();
       } catch (err) {
-        setError(err instanceof ApiError ? err.message : "Chat failed.");
+        setError(err instanceof ApiError ? err.message : t("chat.failed"));
       } finally {
         setBusy(false);
       }
     },
-    [busy, projectId, load],
+    [busy, projectId, load, t],
   );
 
   // Auto-send a question routed in from the guide's suggested chips.
@@ -85,11 +87,11 @@ export function ChatPanel({
 
   return (
     <div className="flex min-h-[24rem] flex-1 flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-6">
-      <h2 className="text-lg font-semibold text-ink">Chat with your sources</h2>
+      <h2 className="text-lg font-semibold text-ink">{t("chat.title")}</h2>
 
       <div className="flex flex-1 flex-col gap-3 overflow-y-auto">
         {messages.length === 0 && !busy && (
-          <p className="text-sm text-ink/40">Ask a question grounded in your sources.</p>
+          <p className="text-sm text-ink/40">{t("chat.empty")}</p>
         )}
         {messages.map((m) => (
           <div
@@ -113,14 +115,14 @@ export function ChatPanel({
                     title={c.snippet}
                     className="cursor-help rounded border border-ink/10 bg-ink/[0.03] px-1.5 py-0.5 text-[10px] text-ink/50"
                   >
-                    cite {i + 1}
+                    {t("chat.cite")} {i + 1}
                   </span>
                 ))}
               </div>
             )}
           </div>
         ))}
-        {busy && <p className="self-start text-sm text-ink/40">Thinking…</p>}
+        {busy && <p className="self-start text-sm text-ink/40">{t("chat.thinking")}</p>}
         <div ref={endRef} />
       </div>
 
@@ -134,7 +136,7 @@ export function ChatPanel({
         <input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          placeholder="Ask about your sources…"
+          placeholder={t("chat.placeholder")}
           className="flex-1 rounded-lg border border-ink/15 px-3 py-2 text-sm focus:border-accent focus:outline-none"
         />
         <button
@@ -142,7 +144,7 @@ export function ChatPanel({
           disabled={busy || !input.trim()}
           className="rounded-lg bg-accent px-4 py-2 text-sm text-white disabled:opacity-40"
         >
-          Send
+          {t("chat.send")}
         </button>
       </form>
     </div>

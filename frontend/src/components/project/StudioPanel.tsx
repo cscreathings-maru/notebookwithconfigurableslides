@@ -2,23 +2,27 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { localeToLanguageName } from "@/lib/i18n/config";
+import { useLocale, useT } from "@/lib/i18n/LocaleProvider";
+import type { MessageKey } from "@/lib/i18n/messages/en";
 import {
   api,
   ApiError,
   type ContentSource,
   type DeckConfig,
   type Generation,
+  type LanguageOption,
   type ModelOption,
   type Template,
   type Tone,
   type Verbosity,
 } from "@/services/api";
 
-const CONTENT_SOURCES: { value: ContentSource; label: string }[] = [
-  { value: "summary", label: "Notebook summary" },
-  { value: "notebook", label: "Synthesized sources" },
-  { value: "chat", label: "Latest chat answer" },
-  { value: "custom", label: "Custom markdown" },
+const CONTENT_SOURCES: { value: ContentSource; labelKey: MessageKey }[] = [
+  { value: "summary", labelKey: "studio.source.summary" },
+  { value: "notebook", labelKey: "studio.source.notebook" },
+  { value: "chat", labelKey: "studio.source.chat" },
+  { value: "custom", labelKey: "studio.source.custom" },
 ];
 const TONES: Tone[] = ["default", "casual", "professional", "funny", "educational", "sales_pitch"];
 const DENSITIES: Verbosity[] = ["concise", "standard", "text-heavy"];
@@ -34,6 +38,8 @@ const STATUS_STYLE: Record<string, string> = {
 const TERMINAL = new Set(["ready", "failed"]);
 
 export function StudioPanel({ projectId }: { projectId: string }) {
+  const t = useT();
+  const { locale } = useLocale();
   const [contentSource, setContentSource] = useState<ContentSource>("summary");
   const [customMarkdown, setCustomMarkdown] = useState("");
   const [tone, setTone] = useState<Tone>("professional");
@@ -42,10 +48,12 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   const [templateId, setTemplateId] = useState<string>("");
   const [webSearch, setWebSearch] = useState(false);
   const [model, setModel] = useState<string>("");
+  const [language, setLanguage] = useState<string>(localeToLanguageName[locale]);
   const [exportAs, setExportAs] = useState<"pptx" | "pdf">("pptx");
 
   const [templates, setTemplates] = useState<Template[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
+  const [languages, setLanguages] = useState<LanguageOption[]>([]);
   const [decks, setDecks] = useState<Generation[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -63,8 +71,18 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         setModel(m.find((x) => x.default)?.id ?? m[0]?.id ?? "");
       })
       .catch(() => {});
+    api
+      .listLanguages()
+      .then((langs) => {
+        setLanguages(langs);
+        // Prefer the language matching the current UI locale; else the API default.
+        const preferred = localeToLanguageName[locale];
+        const match = langs.find((l) => l.id === preferred) ?? langs.find((l) => l.default);
+        if (match) setLanguage(match.id);
+      })
+      .catch(() => {});
     loadDecks();
-  }, [loadDecks]);
+  }, [loadDecks, locale]);
 
   const pollUntilDone = useCallback(
     async (id: string) => {
@@ -95,19 +113,20 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         web_search: webSearch,
         model: model || undefined,
         export_as: exportAs,
+        language: language || undefined,
       };
       if (contentSource === "custom") config.custom_markdown = customMarkdown;
       if (contentSource === "chat") {
         const thread = await api.listChat(projectId);
         const lastAnswer = [...thread].reverse().find((m) => m.role === "assistant");
-        if (!lastAnswer) throw new ApiError(400, "no_chat", "Ask something in chat first.");
+        if (!lastAnswer) throw new ApiError(400, "no_chat", t("studio.askChatFirst"));
         config.chat_message_id = lastAnswer.id;
       }
       const gen = await api.generateDeck(projectId, config);
       loadDecks();
       pollUntilDone(gen.id);
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not start generation.");
+      setError(err instanceof ApiError ? err.message : t("studio.startFailed"));
     } finally {
       setBusy(false);
     }
@@ -118,16 +137,16 @@ export function StudioPanel({ projectId }: { projectId: string }) {
       const { url } = await api.downloadGeneration(g.id, fmt);
       window.open(url, "_blank");
     } catch {
-      setError("Download unavailable.");
+      setError(t("studio.downloadUnavailable"));
     }
   };
 
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-6">
-      <h2 className="text-lg font-semibold text-ink">Studio — generate slides</h2>
+      <h2 className="text-lg font-semibold text-ink">{t("studio.title")}</h2>
 
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-ink/60">Content source</span>
+        <span className="text-ink/60">{t("studio.contentSource")}</span>
         <select
           value={contentSource}
           onChange={(e) => setContentSource(e.target.value as ContentSource)}
@@ -135,7 +154,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         >
           {CONTENT_SOURCES.map((c) => (
             <option key={c.value} value={c.value}>
-              {c.label}
+              {t(c.labelKey)}
             </option>
           ))}
         </select>
@@ -145,7 +164,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         <textarea
           value={customMarkdown}
           onChange={(e) => setCustomMarkdown(e.target.value)}
-          placeholder={"## Slide title\n- point one\n- point two"}
+          placeholder={t("studio.customPlaceholder")}
           rows={5}
           className="rounded-lg border border-ink/15 px-3 py-2 font-mono text-xs focus:border-accent focus:outline-none"
         />
@@ -153,21 +172,21 @@ export function StudioPanel({ projectId }: { projectId: string }) {
 
       <div className="grid grid-cols-2 gap-3 text-sm">
         <label className="flex flex-col gap-1">
-          <span className="text-ink/60">Tone</span>
+          <span className="text-ink/60">{t("studio.tone")}</span>
           <select
             value={tone}
             onChange={(e) => setTone(e.target.value as Tone)}
             className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
           >
-            {TONES.map((t) => (
-              <option key={t} value={t}>
-                {t.replace("_", " ")}
+            {TONES.map((x) => (
+              <option key={x} value={x}>
+                {t(`tone.${x}` as MessageKey)}
               </option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-ink/60">Density</span>
+          <span className="text-ink/60">{t("studio.density")}</span>
           <select
             value={density}
             onChange={(e) => setDensity(e.target.value as Verbosity)}
@@ -175,13 +194,13 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           >
             {DENSITIES.map((d) => (
               <option key={d} value={d}>
-                {d}
+                {t(`density.${d}` as MessageKey)}
               </option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-ink/60">Slides</span>
+          <span className="text-ink/60">{t("studio.slides")}</span>
           <input
             type="number"
             min={1}
@@ -192,7 +211,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           />
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-ink/60">Output</span>
+          <span className="text-ink/60">{t("studio.output")}</span>
           <select
             value={exportAs}
             onChange={(e) => setExportAs(e.target.value as "pptx" | "pdf")}
@@ -203,22 +222,36 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-ink/60">Template</span>
+          <span className="text-ink/60">{t("studio.language")}</span>
           <select
-            value={templateId}
-            onChange={(e) => setTemplateId(e.target.value)}
+            value={language}
+            onChange={(e) => setLanguage(e.target.value)}
             className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
           >
-            <option value="">Default theme</option>
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name}
+            {languages.map((l) => (
+              <option key={l.id} value={l.id}>
+                {l.id}
               </option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1">
-          <span className="text-ink/60">Model</span>
+          <span className="text-ink/60">{t("studio.template")}</span>
+          <select
+            value={templateId}
+            onChange={(e) => setTemplateId(e.target.value)}
+            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
+          >
+            <option value="">{t("studio.defaultTheme")}</option>
+            {templates.map((tpl) => (
+              <option key={tpl.id} value={tpl.id}>
+                {tpl.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className="flex flex-col gap-1">
+          <span className="text-ink/60">{t("studio.model")}</span>
           <select
             value={model}
             onChange={(e) => setModel(e.target.value)}
@@ -239,7 +272,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           checked={webSearch}
           onChange={(e) => setWebSearch(e.target.checked)}
         />
-        Web search grounding
+        {t("studio.webSearch")}
       </label>
 
       {error && (
@@ -254,21 +287,24 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         disabled={busy}
         className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
       >
-        {busy ? "Starting…" : "Generate deck"}
+        {busy ? t("studio.starting") : t("studio.generate")}
       </button>
 
       <div className="mt-2 flex flex-col gap-2">
-        <p className="text-xs uppercase tracking-wide text-ink/50">Decks</p>
-        {decks.length === 0 && <p className="text-sm text-ink/40">No decks yet.</p>}
+        <p className="text-xs uppercase tracking-wide text-ink/50">{t("studio.decks")}</p>
+        {decks.length === 0 && <p className="text-sm text-ink/40">{t("studio.noDecks")}</p>}
         {decks.map((g) => (
           <div
             key={g.id}
             className="flex items-center justify-between rounded-lg border border-ink/10 px-3 py-2 text-sm"
           >
             <div className="min-w-0">
-              <span className={STATUS_STYLE[g.status] ?? "text-ink/60"}>{g.status}</span>
+              <span className={STATUS_STYLE[g.status] ?? "text-ink/60"}>
+                {t(`status.gen.${g.status}` as MessageKey)}
+              </span>
               <span className="ml-2 text-ink/50">
-                {(g.params.tone as string) ?? "—"} · {(g.params.n_slides as number) ?? "—"} slides
+                {(g.params.tone as string) ?? "—"} · {(g.params.n_slides as number) ?? "—"}{" "}
+                {t("studio.slidesUnit")}
               </span>
             </div>
             {g.status === "ready" && (

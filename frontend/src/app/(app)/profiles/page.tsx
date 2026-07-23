@@ -5,10 +5,12 @@ import { useCallback, useEffect, useState } from "react";
 import { useAuth } from "@/components/AuthProvider";
 import { ProfileEditor } from "@/components/registry/ProfileEditor";
 import { StatusBadge } from "@/components/registry/StatusBadge";
+import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type Profile, type Template } from "@/services/api";
 
 export default function ProfilesPage() {
   const { me } = useAuth();
+  const t = useT();
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [editing, setEditing] = useState<Profile | null>(null);
@@ -26,7 +28,7 @@ export default function ProfilesPage() {
   useEffect(() => load(), [load]);
 
   if (me && me.role !== "admin") {
-    return <p className="text-sm text-ink/60">Profiles are managed by tenant admins.</p>;
+    return <p className="text-sm text-ink/60">{t("profiles.adminOnly")}</p>;
   }
 
   const onSaved = () => {
@@ -40,7 +42,7 @@ export default function ProfilesPage() {
       await api.approveProfile(id);
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Approve failed");
+      setError(err instanceof ApiError ? err.message : t("profiles.approveFailed"));
     }
   };
 
@@ -49,12 +51,9 @@ export default function ProfilesPage() {
       <header className="flex items-start justify-between">
         <div>
           <h1 id="profiles-heading" className="text-2xl font-semibold text-ink">
-            Stakeholder profiles
+            {t("profiles.title")}
           </h1>
-          <p className="mt-1 text-sm text-ink/60">
-            Audience profiles that drive consistent, on-brand generation. Editing creates a new
-            immutable version.
-          </p>
+          <p className="mt-1 text-sm text-ink/60">{t("profiles.subtitle")}</p>
         </div>
         {!showEditor && (
           <button
@@ -65,7 +64,7 @@ export default function ProfilesPage() {
             }}
             className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white hover:opacity-90"
           >
-            New profile
+            {t("profiles.new")}
           </button>
         )}
       </header>
@@ -92,12 +91,12 @@ export default function ProfilesPage() {
         <table className="w-full text-sm">
           <thead className="bg-ink/[0.03] text-left text-xs uppercase tracking-wide text-ink/50">
             <tr>
-              <th className="px-4 py-3">Name</th>
-              <th className="px-4 py-3">Version</th>
-              <th className="px-4 py-3">Audience</th>
-              <th className="px-4 py-3">Tone</th>
-              <th className="px-4 py-3">Slides</th>
-              <th className="px-4 py-3">Status</th>
+              <th className="px-4 py-3">{t("templates.name")}</th>
+              <th className="px-4 py-3">{t("templates.colVersion")}</th>
+              <th className="px-4 py-3">{t("profiles.colAudience")}</th>
+              <th className="px-4 py-3">{t("studio.tone")}</th>
+              <th className="px-4 py-3">{t("profiles.colSlides")}</th>
+              <th className="px-4 py-3">{t("templates.colStatus")}</th>
               <th className="px-4 py-3" />
             </tr>
           </thead>
@@ -124,7 +123,7 @@ export default function ProfilesPage() {
                       }}
                       className="rounded-lg border border-ink/15 px-3 py-1 text-xs hover:bg-ink/5"
                     >
-                      Edit
+                      {t("common.edit")}
                     </button>
                     {p.status === "draft" && (
                       <button
@@ -132,7 +131,7 @@ export default function ProfilesPage() {
                         onClick={() => approve(p.id)}
                         className="rounded-lg border border-ink/15 px-3 py-1 text-xs hover:bg-ink/5"
                       >
-                        Approve
+                        {t("common.approve")}
                       </button>
                     )}
                   </div>
@@ -142,7 +141,7 @@ export default function ProfilesPage() {
             {profiles.length === 0 && (
               <tr>
                 <td colSpan={7} className="px-4 py-8 text-center text-ink/50">
-                  No profiles yet.
+                  {t("profiles.empty")}
                 </td>
               </tr>
             )}

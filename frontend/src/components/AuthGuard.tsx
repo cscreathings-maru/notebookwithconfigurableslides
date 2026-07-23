@@ -12,6 +12,7 @@ import { useRouter } from "next/navigation";
 import { config } from "@/lib/config";
 import { useAuth } from "@/components/AuthProvider";
 import { Nav } from "@/components/Nav";
+import { useT } from "@/lib/i18n/LocaleProvider";
 import { getNavCollapsed, setNavCollapsed } from "@/services/uiPrefs";
 
 const MOBILE_QUERY = "(max-width: 768px)";
@@ -19,6 +20,7 @@ const MOBILE_QUERY = "(max-width: 768px)";
 export function AuthGuard({ children }: { children: ReactNode }) {
   const { me, loading, error } = useAuth();
   const router = useRouter();
+  const t = useT();
   const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
@@ -46,7 +48,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   if (loading) {
     return (
       <div className="flex min-h-screen items-center justify-center text-sm text-ink/50">
-        Loading session…
+        {t("app.loadingSession")}
       </div>
     );
   }
@@ -66,7 +68,7 @@ export function AuthGuard({ children }: { children: ReactNode }) {
         <button
           type="button"
           onClick={toggleNav}
-          aria-label={collapsed ? "Open sidebar" : "Close sidebar"}
+          aria-label={collapsed ? t("nav.openSidebar") : t("nav.closeSidebar")}
           aria-expanded={!collapsed}
           className="mb-6 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-ink/15 text-ink/70 transition-colors hover:bg-ink/5"
         >

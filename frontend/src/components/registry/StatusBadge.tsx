@@ -1,3 +1,7 @@
+"use client";
+
+import { useT } from "@/lib/i18n/LocaleProvider";
+import type { MessageKey } from "@/lib/i18n/messages/en";
 import type { RegistryStatus } from "@/services/api";
 
 const STYLES: Record<RegistryStatus, string> = {
@@ -7,11 +11,12 @@ const STYLES: Record<RegistryStatus, string> = {
 };
 
 export function StatusBadge({ status }: { status: RegistryStatus }) {
+  const t = useT();
   return (
     <span
       className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STYLES[status]}`}
     >
-      {status}
+      {t(`status.registry.${status}` as MessageKey)}
     </span>
   );
 }

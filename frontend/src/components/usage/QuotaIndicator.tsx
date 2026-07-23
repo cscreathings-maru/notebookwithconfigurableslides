@@ -1,6 +1,10 @@
+"use client";
+
+import { useT } from "@/lib/i18n/LocaleProvider";
 import type { QuotaStatus } from "@/services/api";
 
 export function QuotaIndicator({ quota }: { quota: QuotaStatus }) {
+  const t = useT();
   const unlimited = quota.monthly_limit <= 0;
   const pct = unlimited
     ? 0
@@ -11,11 +15,14 @@ export function QuotaIndicator({ quota }: { quota: QuotaStatus }) {
   return (
     <div className="rounded-2xl border border-ink/10 bg-white p-5">
       <div className="flex items-baseline justify-between">
-        <p className="text-sm font-medium text-ink">Monthly quota</p>
+        <p className="text-sm font-medium text-ink">{t("usage.quotaTitle")}</p>
         <p className="text-xs text-ink/50">
           {unlimited
-            ? "unlimited"
-            : `${quota.used_this_month} / ${quota.monthly_limit} used`}
+            ? t("usage.quotaUnlimited")
+            : t("usage.quotaUsed", {
+                used: quota.used_this_month,
+                limit: quota.monthly_limit,
+              })}
         </p>
       </div>
       {!unlimited && (
@@ -34,8 +41,8 @@ export function QuotaIndicator({ quota }: { quota: QuotaStatus }) {
             }`}
           >
             {danger
-              ? "Quota reached — new generations are blocked."
-              : `${quota.remaining ?? 0} generations remaining this month`}
+              ? t("usage.quotaReached")
+              : t("usage.quotaRemaining", { remaining: quota.remaining ?? 0 })}
           </p>
         </>
       )}

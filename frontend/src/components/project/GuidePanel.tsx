@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type Guide } from "@/services/api";
 
 /**
@@ -15,6 +16,7 @@ export function GuidePanel({
   projectId: string;
   onAsk: (question: string) => void;
 }) {
+  const t = useT();
   const [guide, setGuide] = useState<Guide | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -37,7 +39,7 @@ export function GuidePanel({
     try {
       setGuide(await api.regenerateGuide(projectId));
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Could not generate the guide.");
+      setError(err instanceof ApiError ? err.message : t("guide.failed"));
     } finally {
       setLoading(false);
     }
@@ -46,14 +48,18 @@ export function GuidePanel({
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-6">
       <div className="flex items-center justify-between">
-        <h2 className="text-lg font-semibold text-ink">Notebook guide</h2>
+        <h2 className="text-lg font-semibold text-ink">{t("guide.title")}</h2>
         <button
           type="button"
           onClick={generate}
           disabled={loading}
           className="rounded-lg border border-ink/15 px-3 py-1.5 text-xs hover:bg-ink/5 disabled:opacity-40"
         >
-          {loading ? "Generating…" : guide?.summary ? "Regenerate" : "Generate"}
+          {loading
+            ? t("guide.generating")
+            : guide?.summary
+              ? t("guide.regenerate")
+              : t("guide.generate")}
         </button>
       </div>
 
@@ -64,13 +70,11 @@ export function GuidePanel({
       )}
 
       {!guide?.summary && !loading && (
-        <p className="text-sm text-ink/50">
-          Once your sources are ready, generate an overview and starter questions.
-        </p>
+        <p className="text-sm text-ink/50">{t("guide.empty")}</p>
       )}
 
       {loading && !guide?.summary && (
-        <p className="text-sm text-ink/50">Reading your sources…</p>
+        <p className="text-sm text-ink/50">{t("guide.reading")}</p>
       )}
 
       {guide?.summary && (
@@ -80,7 +84,7 @@ export function GuidePanel({
           </p>
           {guide.suggested_questions.length > 0 && (
             <div className="flex flex-col gap-2">
-              <p className="text-xs uppercase tracking-wide text-ink/50">Try asking</p>
+              <p className="text-xs uppercase tracking-wide text-ink/50">{t("guide.tryAsking")}</p>
               <div className="flex flex-wrap gap-2">
                 {guide.suggested_questions.map((q, i) => (
                   <button

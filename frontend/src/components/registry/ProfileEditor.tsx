@@ -12,6 +12,8 @@ import {
   type Verbosity,
 } from "@/services/api";
 import { SectionStructureBuilder } from "@/components/registry/SectionStructureBuilder";
+import { useT } from "@/lib/i18n/LocaleProvider";
+import type { MessageKey } from "@/lib/i18n/messages/en";
 
 const TONES: Tone[] = [
   "default",
@@ -53,13 +55,14 @@ function initialInput(editing: Profile | null, templates: Template[]): ProfileIn
     verbosity: "standard",
     slide_min: 8,
     slide_max: 12,
-    language: "en",
+    language: "Bahasa Indonesia",
     section_structure: [],
     prompt_config: {},
   };
 }
 
 export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) {
+  const t = useT();
   const [form, setForm] = useState<ProfileInput>(() => initialInput(editing, templates));
   const [systemPrompt, setSystemPrompt] = useState<string>(
     typeof editing?.prompt_config?.system === "string"
@@ -88,7 +91,7 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
       }
       onSaved();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to save profile");
+      setError(err instanceof ApiError ? err.message : t("profiles.saveFailed"));
     } finally {
       setSaving(false);
     }
@@ -101,16 +104,16 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
     <form onSubmit={submit} className="flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-6">
       <div className="flex items-baseline justify-between">
         <h2 className="text-lg font-semibold text-ink">
-          {editing ? `Edit “${editing.name}” → new version` : "New profile"}
+          {editing ? t("profiles.editVersion", { name: editing.name }) : t("profiles.new")}
         </h2>
         <button type="button" onClick={onCancel} className="text-sm text-ink/50 hover:text-ink">
-          Cancel
+          {t("common.cancel")}
         </button>
       </div>
 
       <div className="grid grid-cols-2 gap-4">
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Name</span>
+          <span className="text-ink/60">{t("templates.name")}</span>
           <input
             required
             value={form.name}
@@ -119,16 +122,18 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Template</span>
+          <span className="text-ink/60">{t("studio.template")}</span>
           <select
             value={form.template_id}
             onChange={(e) => set("template_id", e.target.value)}
             className={inputCls}
           >
-            {templates.length === 0 && <option value="">No approved templates</option>}
-            {templates.map((t) => (
-              <option key={t.id} value={t.id}>
-                {t.name} (v{t.version})
+            {templates.length === 0 && (
+              <option value="">{t("profiles.noApprovedTemplates")}</option>
+            )}
+            {templates.map((tpl) => (
+              <option key={tpl.id} value={tpl.id}>
+                {tpl.name} (v{tpl.version})
               </option>
             ))}
           </select>
@@ -136,29 +141,29 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
       </div>
 
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-ink/60">Audience</span>
+        <span className="text-ink/60">{t("profiles.audience")}</span>
         <input
           required
           value={form.audience}
           onChange={(e) => set("audience", e.target.value)}
-          placeholder="e.g. Group management, technical, non-technical"
+          placeholder={t("profiles.audiencePlaceholder")}
           className={inputCls}
         />
       </label>
 
       <div className="grid grid-cols-4 gap-4">
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Tone</span>
+          <span className="text-ink/60">{t("studio.tone")}</span>
           <select value={form.tone} onChange={(e) => set("tone", e.target.value as Tone)} className={inputCls}>
-            {TONES.map((t) => (
-              <option key={t} value={t}>
-                {t}
+            {TONES.map((x) => (
+              <option key={x} value={x}>
+                {t(`tone.${x}` as MessageKey)}
               </option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Verbosity</span>
+          <span className="text-ink/60">{t("profiles.verbosity")}</span>
           <select
             value={form.verbosity}
             onChange={(e) => set("verbosity", e.target.value as Verbosity)}
@@ -166,13 +171,13 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
           >
             {VERBOSITIES.map((v) => (
               <option key={v} value={v}>
-                {v}
+                {t(`density.${v}` as MessageKey)}
               </option>
             ))}
           </select>
         </label>
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Slides min</span>
+          <span className="text-ink/60">{t("profiles.slidesMin")}</span>
           <input
             type="number"
             min={1}
@@ -182,7 +187,7 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
           />
         </label>
         <label className="flex flex-col gap-1 text-sm">
-          <span className="text-ink/60">Slides max</span>
+          <span className="text-ink/60">{t("profiles.slidesMax")}</span>
           <input
             type="number"
             min={1}
@@ -194,16 +199,16 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
       </div>
 
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-ink/60">Language</span>
+        <span className="text-ink/60">{t("studio.language")}</span>
         <input
           value={form.language}
           onChange={(e) => set("language", e.target.value)}
-          className={`${inputCls} max-w-32`}
+          className={`${inputCls} max-w-40`}
         />
       </label>
 
       <div className="flex flex-col gap-2 text-sm">
-        <span className="text-ink/60">Required section structure (ordered)</span>
+        <span className="text-ink/60">{t("profiles.sectionStructure")}</span>
         <SectionStructureBuilder
           value={form.section_structure as Array<{ title: string }>}
           onChange={(next) => set("section_structure", next)}
@@ -211,12 +216,12 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
       </div>
 
       <label className="flex flex-col gap-1 text-sm">
-        <span className="text-ink/60">Prompt config (system)</span>
+        <span className="text-ink/60">{t("profiles.promptConfig")}</span>
         <textarea
           value={systemPrompt}
           onChange={(e) => setSystemPrompt(e.target.value)}
           rows={3}
-          placeholder="Controlled prompt guidance / exemplars"
+          placeholder={t("profiles.promptPlaceholder")}
           className={inputCls}
         />
       </label>
@@ -232,7 +237,11 @@ export function ProfileEditor({ templates, editing, onSaved, onCancel }: Props) 
         disabled={saving || form.template_id === ""}
         className="self-start rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white transition-opacity hover:opacity-90 disabled:opacity-50"
       >
-        {saving ? "Saving…" : editing ? "Save as new version" : "Create profile"}
+        {saving
+          ? t("profiles.saving")
+          : editing
+            ? t("profiles.saveNewVersion")
+            : t("profiles.createProfile")}
       </button>
     </form>
   );

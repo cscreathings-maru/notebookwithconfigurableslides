@@ -258,6 +258,11 @@ export interface ModelOption {
   default: boolean;
 }
 
+export interface LanguageOption {
+  id: string;
+  default: boolean;
+}
+
 export type ContentSource = "summary" | "notebook" | "chat" | "custom";
 
 export interface DeckConfig {
@@ -271,6 +276,8 @@ export interface DeckConfig {
   web_search: boolean;
   model?: string;
   export_as: "pptx" | "pdf";
+  // AI output language NAME (e.g. "Bahasa Indonesia"); omit → server default.
+  language?: string;
 }
 
 function rangeQuery(from?: string, to?: string): string {
@@ -330,6 +337,9 @@ export const api = {
 
   // --- Models (OpenRouter dropdown) ---
   listModels: () => request<ModelOption[]>("/models"),
+
+  // --- Languages (AI output language dropdown) ---
+  listLanguages: () => request<LanguageOption[]>("/languages"),
 
   // --- Generation ---
   createGeneration: (projectId: string, outlineId: string) =>

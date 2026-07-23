@@ -5,6 +5,8 @@
  * Each entry is a section with a title; order is meaningful (it pins deck structure).
  */
 
+import { useT } from "@/lib/i18n/LocaleProvider";
+
 interface Section {
   title: string;
   [key: string]: unknown;
@@ -16,6 +18,7 @@ interface Props {
 }
 
 export function SectionStructureBuilder({ value, onChange }: Props) {
+  const t = useT();
   const update = (index: number, title: string) =>
     onChange(value.map((s, i) => (i === index ? { ...s, title } : s)));
 
@@ -35,14 +38,14 @@ export function SectionStructureBuilder({ value, onChange }: Props) {
           <input
             value={section.title}
             onChange={(e) => update(index, e.target.value)}
-            placeholder="Section title"
+            placeholder={t("sections.titlePlaceholder")}
             className="flex-1 rounded-lg border border-ink/15 px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
           />
           <button
             type="button"
             onClick={() => move(index, -1)}
             className="rounded px-2 py-1 text-xs text-ink/50 hover:bg-ink/5"
-            aria-label="Move up"
+            aria-label={t("sections.moveUp")}
           >
             ↑
           </button>
@@ -50,7 +53,7 @@ export function SectionStructureBuilder({ value, onChange }: Props) {
             type="button"
             onClick={() => move(index, 1)}
             className="rounded px-2 py-1 text-xs text-ink/50 hover:bg-ink/5"
-            aria-label="Move down"
+            aria-label={t("sections.moveDown")}
           >
             ↓
           </button>
@@ -58,7 +61,7 @@ export function SectionStructureBuilder({ value, onChange }: Props) {
             type="button"
             onClick={() => onChange(value.filter((_, i) => i !== index))}
             className="rounded px-2 py-1 text-xs text-red-600 hover:bg-red-50"
-            aria-label="Remove section"
+            aria-label={t("sections.remove")}
           >
             ✕
           </button>
@@ -69,7 +72,7 @@ export function SectionStructureBuilder({ value, onChange }: Props) {
         onClick={() => onChange([...value, { title: "" }])}
         className="self-start rounded-lg border border-dashed border-ink/20 px-3 py-1.5 text-xs text-ink/60 hover:bg-ink/5"
       >
-        + Add section
+        {t("sections.add")}
       </button>
     </div>
   );

@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useT } from "@/lib/i18n/LocaleProvider";
+import type { MessageKey } from "@/lib/i18n/messages/en";
 import { api, ApiError, type Source } from "@/services/api";
 
 const STATUS_STYLE: Record<string, string> = {
@@ -12,6 +14,7 @@ const STATUS_STYLE: Record<string, string> = {
 };
 
 export function SourcesPanel({ projectId }: { projectId: string }) {
+  const t = useT();
   const [sources, setSources] = useState<Source[]>([]);
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -39,7 +42,7 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
       await api.uploadSource(projectId, { file });
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Upload failed");
+      setError(err instanceof ApiError ? err.message : t("sources.uploadFailed"));
     }
   };
 
@@ -52,13 +55,13 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
       setUrl("");
       load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Add URL failed");
+      setError(err instanceof ApiError ? err.message : t("sources.addUrlFailed"));
     }
   };
 
   return (
     <div className="flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-6">
-      <h2 className="text-lg font-semibold text-ink">Sources</h2>
+      <h2 className="text-lg font-semibold text-ink">{t("sources.title")}</h2>
 
       <div className="flex flex-wrap items-center gap-3">
         <input
@@ -70,14 +73,14 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
           <input
             value={url}
             onChange={(e) => setUrl(e.target.value)}
-            placeholder="https://…"
+            placeholder={t("sources.urlPlaceholder")}
             className="rounded-lg border border-ink/15 px-3 py-1.5 text-sm focus:border-accent focus:outline-none"
           />
           <button
             type="submit"
             className="rounded-lg border border-ink/15 px-3 py-1.5 text-sm hover:bg-ink/5"
           >
-            Add URL
+            {t("sources.addUrl")}
           </button>
         </form>
       </div>
@@ -94,10 +97,12 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
             <span className="truncate text-ink/80">
               {s.name} <span className="text-ink/40">({s.kind})</span>
             </span>
-            <span className={STATUS_STYLE[s.status] ?? "text-ink/50"}>{s.status}</span>
+            <span className={STATUS_STYLE[s.status] ?? "text-ink/50"}>
+              {t(`status.source.${s.status}` as MessageKey)}
+            </span>
           </li>
         ))}
-        {sources.length === 0 && <li className="py-2 text-ink/40">No sources yet.</li>}
+        {sources.length === 0 && <li className="py-2 text-ink/40">{t("sources.empty")}</li>}
       </ul>
     </div>
   );
