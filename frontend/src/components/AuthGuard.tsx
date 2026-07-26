@@ -47,7 +47,8 @@ export function AuthGuard({ children }: { children: ReactNode }) {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center text-sm text-ink/50">
+      <div className="flex min-h-screen flex-col items-center justify-center gap-4 text-sm text-gray-500 bg-surface">
+        <div className="h-8 w-8 animate-spin rounded-full border-2 border-gray-200 border-t-accent"></div>
         {t("app.loadingSession")}
       </div>
     );
@@ -56,25 +57,29 @@ export function AuthGuard({ children }: { children: ReactNode }) {
   if (!me) return null; // redirecting
 
   return (
-    <div className="flex min-h-screen">
+    <div className="flex min-h-screen bg-surface">
       <aside
-        className={`shrink-0 overflow-hidden bg-white transition-[width] duration-200 ${
+        className={`shrink-0 overflow-hidden bg-ink transition-[width] duration-300 ease-in-out ${
           collapsed ? "w-0" : "w-64 border-r border-ink/10"
         }`}
       >
-        <Nav />
+        <div className="w-64 h-full">
+          <Nav />
+        </div>
       </aside>
-      <main className="flex-1 p-8">
-        <button
-          type="button"
-          onClick={toggleNav}
-          aria-label={collapsed ? t("nav.openSidebar") : t("nav.closeSidebar")}
-          aria-expanded={!collapsed}
-          className="mb-6 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-ink/15 text-ink/70 transition-colors hover:bg-ink/5"
-        >
-          {collapsed ? <MenuIcon /> : <PanelLeftIcon />}
-        </button>
-        {children}
+      <main className="flex-1 flex flex-col h-screen overflow-y-auto animate-fade-in">
+        <div className="p-8 pb-16">
+          <button
+            type="button"
+            onClick={toggleNav}
+            aria-label={collapsed ? t("nav.openSidebar") : t("nav.closeSidebar")}
+            aria-expanded={!collapsed}
+            className="mb-8 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm transition-all hover:bg-gray-50 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-accent-light"
+          >
+            {collapsed ? <MenuIcon /> : <PanelLeftIcon />}
+          </button>
+          {children}
+        </div>
       </main>
     </div>
   );

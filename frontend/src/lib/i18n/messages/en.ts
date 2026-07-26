@@ -28,7 +28,7 @@ export const en = {
 
   // Login
   "login.title": "Sign in",
-  "login.subtitle": "Presentation Notebook LLM orchestration console.",
+  "login.subtitle": "NoteAI — intelligent presentation platform.",
   "login.sso": "Continue with SSO",
   "login.failed": "Login failed",
   "login.devTokenLabel": "Dev token (OIDC_DEV_MODE)",

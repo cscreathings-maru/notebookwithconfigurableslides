@@ -5,16 +5,16 @@ import type { MessageKey } from "@/lib/i18n/messages/en";
 import type { RegistryStatus } from "@/services/api";
 
 const STYLES: Record<RegistryStatus, string> = {
-  draft: "bg-ink/10 text-ink/70",
-  approved: "bg-accent/15 text-accent",
-  archived: "bg-ink/5 text-ink/40 line-through",
+  draft: "bg-gray-100 text-gray-700 border border-gray-200",
+  approved: "bg-accent-faint text-accent border border-accent/20",
+  archived: "bg-gray-50 text-gray-400 line-through border border-gray-100",
 };
 
 export function StatusBadge({ status }: { status: RegistryStatus }) {
   const t = useT();
   return (
     <span
-      className={`inline-block rounded-full px-2 py-0.5 text-xs font-medium ${STYLES[status]}`}
+      className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium capitalize ${STYLES[status]}`}
     >
       {t(`status.registry.${status}` as MessageKey)}
     </span>

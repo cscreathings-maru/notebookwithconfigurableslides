@@ -27,7 +27,7 @@ export const id: Partial<Record<MessageKey, string>> = {
 
   // Login
   "login.title": "Masuk",
-  "login.subtitle": "Konsol orkestrasi Presentation Notebook LLM.",
+  "login.subtitle": "NoteAI — platform presentasi cerdas.",
   "login.sso": "Lanjutkan dengan SSO",
   "login.failed": "Gagal masuk",
   "login.devTokenLabel": "Token dev (OIDC_DEV_MODE)",

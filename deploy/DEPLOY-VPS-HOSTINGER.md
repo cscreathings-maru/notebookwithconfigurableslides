@@ -15,7 +15,7 @@ the VPS-specific runbook.
 - 11 containers: `traefik, frontend, orchestrator, worker, init, postgres, redis,
   minio, surrealdb, open-notebook, presenton`.
 - Files: `deploy/docker-compose.lite.yml`, `deploy/.env.lite.example`.
-- Repo: `github.com/cscreathings-maru/notebookwithconfigurableslides`.
+- Repo: `github.com/noteai/notebookwithconfigurableslides`.
 
 ---
 
@@ -141,7 +141,7 @@ docker compose version  # must be v2.20+ (for service_completed_successfully)
 
 ```bash
 cd ~
-git clone https://github.com/cscreathings-maru/notebookwithconfigurableslides.git app
+git clone https://github.com/noteai/notebookwithconfigurableslides.git app
 cd app
 # (adjust if your default branch differs)
 ```

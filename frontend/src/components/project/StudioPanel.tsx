@@ -28,11 +28,11 @@ const TONES: Tone[] = ["default", "casual", "professional", "funny", "educationa
 const DENSITIES: Verbosity[] = ["concise", "standard", "text-heavy"];
 
 const STATUS_STYLE: Record<string, string> = {
-  ready: "text-emerald-600",
-  failed: "text-red-600",
-  queued: "text-ink/50",
-  generating: "text-amber-600",
-  validating: "text-amber-600",
+  ready: "bg-emerald-500 text-emerald-700",
+  failed: "bg-red-500 text-red-700",
+  queued: "bg-gray-200 text-gray-500",
+  generating: "bg-amber-500 text-amber-700",
+  validating: "bg-amber-500 text-amber-700",
 };
 
 const TERMINAL = new Set(["ready", "failed"]);
@@ -75,7 +75,6 @@ export function StudioPanel({ projectId }: { projectId: string }) {
       .listLanguages()
       .then((langs) => {
         setLanguages(langs);
-        // Prefer the language matching the current UI locale; else the API default.
         const preferred = localeToLanguageName[locale];
         const match = langs.find((l) => l.id === preferred) ?? langs.find((l) => l.default);
         if (match) setLanguage(match.id);
@@ -142,195 +141,238 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   };
 
   return (
-    <div className="flex flex-col gap-4 rounded-2xl border border-ink/10 bg-white p-6">
-      <h2 className="text-lg font-semibold text-ink">{t("studio.title")}</h2>
+    <div className="card p-6 flex flex-col gap-6 h-full">
+      <div className="flex items-center gap-2 border-b border-gray-100 pb-4">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-accent">
+          <path d="M12 2a10 10 0 0 0-10 10c0 5.523 4.477 10 10 10s10-4.477 10-10a10 10 0 0 0-10-10z" />
+          <path d="M12 6v6l4 2" />
+        </svg>
+        <h2 className="text-base font-semibold text-gray-900">{t("studio.title")}</h2>
+      </div>
 
-      <label className="flex flex-col gap-1 text-sm">
-        <span className="text-ink/60">{t("studio.contentSource")}</span>
-        <select
-          value={contentSource}
-          onChange={(e) => setContentSource(e.target.value as ContentSource)}
-          className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
-        >
-          {CONTENT_SOURCES.map((c) => (
-            <option key={c.value} value={c.value}>
-              {t(c.labelKey)}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      {contentSource === "custom" && (
-        <textarea
-          value={customMarkdown}
-          onChange={(e) => setCustomMarkdown(e.target.value)}
-          placeholder={t("studio.customPlaceholder")}
-          rows={5}
-          className="rounded-lg border border-ink/15 px-3 py-2 font-mono text-xs focus:border-accent focus:outline-none"
-        />
-      )}
-
-      <div className="grid grid-cols-2 gap-3 text-sm">
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.tone")}</span>
+      <div className="flex flex-col gap-5 overflow-y-auto flex-1 pr-2">
+        <label className="flex flex-col gap-1.5">
+          <span className="text-sm font-medium text-gray-700">{t("studio.contentSource")}</span>
           <select
-            value={tone}
-            onChange={(e) => setTone(e.target.value as Tone)}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
+            value={contentSource}
+            onChange={(e) => setContentSource(e.target.value as ContentSource)}
+            className="input-field"
           >
-            {TONES.map((x) => (
-              <option key={x} value={x}>
-                {t(`tone.${x}` as MessageKey)}
+            {CONTENT_SOURCES.map((c) => (
+              <option key={c.value} value={c.value}>
+                {t(c.labelKey)}
               </option>
             ))}
           </select>
         </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.density")}</span>
-          <select
-            value={density}
-            onChange={(e) => setDensity(e.target.value as Verbosity)}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
-          >
-            {DENSITIES.map((d) => (
-              <option key={d} value={d}>
-                {t(`density.${d}` as MessageKey)}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.slides")}</span>
-          <input
-            type="number"
-            min={1}
-            max={40}
-            value={nSlides}
-            onChange={(e) => setNSlides(Number(e.target.value))}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
+
+        {contentSource === "custom" && (
+          <textarea
+            value={customMarkdown}
+            onChange={(e) => setCustomMarkdown(e.target.value)}
+            placeholder={t("studio.customPlaceholder")}
+            rows={5}
+            className="input-field font-mono text-xs"
           />
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.output")}</span>
-          <select
-            value={exportAs}
-            onChange={(e) => setExportAs(e.target.value as "pptx" | "pdf")}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
-          >
-            <option value="pptx">PPTX</option>
-            <option value="pdf">PDF</option>
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.language")}</span>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
-          >
-            {languages.map((l) => (
-              <option key={l.id} value={l.id}>
-                {l.id}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.template")}</span>
-          <select
-            value={templateId}
-            onChange={(e) => setTemplateId(e.target.value)}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
-          >
-            <option value="">{t("studio.defaultTheme")}</option>
-            {templates.map((tpl) => (
-              <option key={tpl.id} value={tpl.id}>
-                {tpl.name}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1">
-          <span className="text-ink/60">{t("studio.model")}</span>
-          <select
-            value={model}
-            onChange={(e) => setModel(e.target.value)}
-            className="rounded-lg border border-ink/15 px-3 py-2 focus:border-accent focus:outline-none"
-          >
-            {models.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.id}
-              </option>
-            ))}
-          </select>
+        )}
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.template")}</span>
+            <select
+              value={templateId}
+              onChange={(e) => setTemplateId(e.target.value)}
+              className="input-field"
+            >
+              <option value="">{t("studio.defaultTheme")}</option>
+              {templates.map((tpl) => (
+                <option key={tpl.id} value={tpl.id}>
+                  {tpl.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.tone")}</span>
+            <select
+              value={tone}
+              onChange={(e) => setTone(e.target.value as Tone)}
+              className="input-field"
+            >
+              {TONES.map((x) => (
+                <option key={x} value={x}>
+                  {t(`tone.${x}` as MessageKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.density")}</span>
+            <select
+              value={density}
+              onChange={(e) => setDensity(e.target.value as Verbosity)}
+              className="input-field"
+            >
+              {DENSITIES.map((d) => (
+                <option key={d} value={d}>
+                  {t(`density.${d}` as MessageKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.slides")}</span>
+            <input
+              type="number"
+              min={1}
+              max={40}
+              value={nSlides}
+              onChange={(e) => setNSlides(Number(e.target.value))}
+              className="input-field"
+            />
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.output")}</span>
+            <select
+              value={exportAs}
+              onChange={(e) => setExportAs(e.target.value as "pptx" | "pdf")}
+              className="input-field"
+            >
+              <option value="pptx">PPTX</option>
+              <option value="pdf">PDF</option>
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.language")}</span>
+            <select
+              value={language}
+              onChange={(e) => setLanguage(e.target.value)}
+              className="input-field"
+            >
+              {languages.map((l) => (
+                <option key={l.id} value={l.id}>
+                  {l.id}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="flex flex-col gap-1.5 sm:col-span-2">
+            <span className="text-sm font-medium text-gray-700">{t("studio.model")}</span>
+            <select
+              value={model}
+              onChange={(e) => setModel(e.target.value)}
+              className="input-field"
+            >
+              {models.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.id}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+
+        <label className="flex items-center gap-2 text-sm text-gray-700 p-3 bg-gray-50 rounded-lg border border-gray-100 cursor-pointer hover:bg-gray-100 transition-colors">
+          <input
+            type="checkbox"
+            checked={webSearch}
+            onChange={(e) => setWebSearch(e.target.checked)}
+            className="w-4 h-4 text-accent rounded border-gray-300 focus:ring-accent"
+          />
+          <span className="font-medium">{t("studio.webSearch")}</span>
         </label>
       </div>
 
-      <label className="flex items-center gap-2 text-sm text-ink/70">
-        <input
-          type="checkbox"
-          checked={webSearch}
-          onChange={(e) => setWebSearch(e.target.checked)}
-        />
-        {t("studio.webSearch")}
-      </label>
-
       {error && (
-        <p role="alert" className="text-sm text-red-600">
+        <div role="alert" className="rounded-lg bg-red-50 p-3 text-sm text-red-600">
           {error}
-        </p>
+        </div>
       )}
 
-      <button
-        type="button"
-        onClick={generate}
-        disabled={busy}
-        className="rounded-lg bg-accent px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-      >
-        {busy ? t("studio.starting") : t("studio.generate")}
-      </button>
+      <div className="pt-4 border-t border-gray-100 flex flex-col gap-5">
+        <button
+          type="button"
+          onClick={generate}
+          disabled={busy}
+          className="btn-primary w-full py-2.5 flex items-center justify-center gap-2 text-base"
+        >
+          {busy ? (
+            <svg className="w-5 h-5 animate-spin" viewBox="0 0 24 24" fill="none">
+              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+          ) : (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+          )}
+          {busy ? t("studio.starting") : t("studio.generate")}
+        </button>
 
-      <div className="mt-2 flex flex-col gap-2">
-        <p className="text-xs uppercase tracking-wide text-ink/50">{t("studio.decks")}</p>
-        {decks.length === 0 && <p className="text-sm text-ink/40">{t("studio.noDecks")}</p>}
-        {decks.map((g) => (
-          <div
-            key={g.id}
-            className="flex items-center justify-between rounded-lg border border-ink/10 px-3 py-2 text-sm"
-          >
-            <div className="min-w-0">
-              <span className={STATUS_STYLE[g.status] ?? "text-ink/60"}>
-                {t(`status.gen.${g.status}` as MessageKey)}
-              </span>
-              <span className="ml-2 text-ink/50">
-                {(g.params.tone as string) ?? "—"} · {(g.params.n_slides as number) ?? "—"}{" "}
-                {t("studio.slidesUnit")}
-              </span>
+        <div className="flex flex-col gap-3">
+          <h3 className="text-xs font-semibold uppercase tracking-wider text-gray-500">{t("studio.decks")}</h3>
+          {decks.length === 0 && (
+            <div className="py-4 text-center rounded-lg border border-dashed border-gray-200">
+              <p className="text-sm text-gray-400">{t("studio.noDecks")}</p>
             </div>
-            {g.status === "ready" && (
-              <div className="flex shrink-0 gap-2">
-                {g.artifacts.pptx && (
-                  <button
-                    type="button"
-                    onClick={() => download(g, "pptx")}
-                    className="rounded border border-ink/15 px-2 py-1 text-xs hover:bg-ink/5"
-                  >
-                    PPTX
-                  </button>
-                )}
-                {g.artifacts.pdf && (
-                  <button
-                    type="button"
-                    onClick={() => download(g, "pdf")}
-                    className="rounded border border-ink/15 px-2 py-1 text-xs hover:bg-ink/5"
-                  >
-                    PDF
-                  </button>
+          )}
+          
+          <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+            {decks.map((g) => (
+              <div
+                key={g.id}
+                className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3 shadow-sm hover:shadow transition-shadow group"
+              >
+                <div className="flex items-center gap-3 min-w-0">
+                  <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_STYLE[g.status]?.split(' ')[0] ?? "bg-gray-200"}`} />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-gray-900 capitalize">
+                      {t(`status.gen.${g.status}` as MessageKey)}
+                    </p>
+                    <p className="text-xs text-gray-500 truncate mt-0.5">
+                      {(g.params.tone as string) ?? "—"} · {(g.params.n_slides as number) ?? "—"} {t("studio.slidesUnit")}
+                    </p>
+                  </div>
+                </div>
+                
+                {g.status === "ready" && (
+                  <div className="flex shrink-0 gap-1.5 ml-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {g.artifacts.pptx && (
+                      <button
+                        type="button"
+                        onClick={() => download(g, "pptx")}
+                        className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7"
+                        title="Download PPTX"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        PPTX
+                      </button>
+                    )}
+                    {g.artifacts.pdf && (
+                      <button
+                        type="button"
+                        onClick={() => download(g, "pdf")}
+                        className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7"
+                        title="Download PDF"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        PDF
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
-            )}
+            ))}
           </div>
-        ))}
+        </div>
       </div>
     </div>
   );
