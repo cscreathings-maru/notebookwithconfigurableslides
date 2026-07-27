@@ -32,7 +32,7 @@ services:
       - "--providers.docker.exposedbydefault=false"
       - "--entrypoints.web.address=:80"
     ports:
-      - "127.0.0.1:8080:80"      # open http://localhost:8080
+      - "127.0.0.1:${TRAEFIK_PORT:-8099}:80"      # open http://localhost:8099 (configurable via TRAEFIK_PORT)
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
     networks: [edge]
