@@ -70,5 +70,5 @@ class JobService:
             task_name,
             str(job.id),
             str(job.tenant_id),
-            _job_unique_id=job.idempotency_key,
+            _job_id=job.idempotency_key,
         )

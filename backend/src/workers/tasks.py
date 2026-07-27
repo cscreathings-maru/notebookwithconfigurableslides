@@ -34,7 +34,7 @@ def _load_job(db, job_id: uuid.UUID, tenant_id: uuid.UUID) -> Job | None:
     return job
 
 
-async def run_ingest(ctx: dict[str, Any], job_id: str, tenant_id: str) -> None:
+async def run_ingest(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any) -> None:
     job_uuid = uuid.UUID(job_id)
     tenant_uuid = uuid.UUID(tenant_id)
 
@@ -103,7 +103,7 @@ def _finish_job(
     db.commit()
 
 
-async def run_generate(ctx: dict[str, Any], job_id: str, tenant_id: str) -> None:
+async def run_generate(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any) -> None:
     from ..engines.presenton import PresentonClient
     from ..generation.worker import generate_presentation
 
