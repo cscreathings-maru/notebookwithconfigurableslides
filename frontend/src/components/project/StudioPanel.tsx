@@ -396,7 +396,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         onClose={() => setEditorOpen(false)}
         title="🎨 Interactive Presentation Slide Editor"
         subtitle={`Polishing deck generation (${activeEditorGenId?.slice(0, 8)}...) — move components and adjust font styling`}
-        editorUrl={`/presenton/presentation/${activeEditorGenId}`}
+        editorUrl={`${process.env.NEXT_PUBLIC_PRESENTON_UI_URL || "https://editor.umarsyukri.com"}/presentation/${activeEditorGenId}`}
       />
     </div>
   );

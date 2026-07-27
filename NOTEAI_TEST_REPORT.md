@@ -1,6 +1,6 @@
 # NoteAI UI/UX & Feature Automated Test Report
 
-**Generated Date:** 2026-07-26 11:19:05  
+**Generated Date:** 2026-07-27 14:08:27  
 **Project:** NoteAI (Rebranded from Maru / Presentation Notebook LLM)  
 **Execution Type:** Automated Verification Suite (Static Analysis, UI Token Verification, API Contract Tests)  
 
@@ -50,7 +50,7 @@
 | **TPL-05** | Verify template creation payload maps to brand_tokens | Button shows spinner; payload bundles colors/fonts into brand_tokens JSON. | ✅ PASS | `Verified patterns in page.tsx: ['brand_tokens:', 'primary,', 'secondary,', 'font,']` |  |
 | **TPL-06** | Inspect created template table columns and visual preview | Table displays correct Audience, Name, Version, and visual preview of Primary Color in Brand Tokens column. | ✅ PASS | `Verified patterns in page.tsx: ['brand_tokens', 'w-4 h-4 rounded-full', 'backgroundColor:\\s*primaryColor']` |  |
 | **TPL-07** | Verify AI-Powered PPTX Dropzone and token extraction wiring | Dropzone calls extractTemplateTokens and displays AI Extraction Summary card with confidence score. | ✅ PASS | `Verified patterns in page.tsx: ['AI-Powered Template Onboarding', 'extractTemplateTokens', 'AI Extraction Summary']` |  |
-| **TPL-08** | Check SlideEditorModal iframe integration and Presenton editor buttons | SlideEditorModal hosts Presenton interactive canvas in iframe; Test in Editor button wired in templates table. | ✅ PASS | `Verified patterns in SlideEditorModal.tsx: ['iframe', 'presenton', 'Interactive Slide']; Verified patterns in page.tsx: ['SlideEditorModal', 'Test in Editor']` |  |
+| **TPL-08** | Check SlideEditorModal launchpad integration and Presenton editor buttons | SlideEditorModal hosts Presenton interactive canvas launchpad opening subdomain tab; Test in Editor button wired in templates table. | ✅ PASS | `Verified patterns in SlideEditorModal.tsx: ['editor\\.umarsyukri\\.com', 'presenton', 'Interactive Presentation']; Verified patterns in page.tsx: ['SlideEditorModal', 'Test in Editor']` |  |
 | **TPL-09** | Verify newly created templates enforce Draft status | Template creation initialized with status=RegistryStatus.draft in registry service. | ✅ PASS | `Verified patterns in service.py: ['status=RegistryStatus\\.draft']` |  |
 ### 📌 Area: Profiles
 
@@ -99,7 +99,7 @@
 
 | Test ID | Action | Expected Result | Status | Evidence | Notes |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| **API-01** | Run Presenton mapping & Template Registry integration tests | Backend API accepts brand_tokens, validates outline mapping, and enforces RBAC/tenant isolation. | ✅ PASS | `All API contract & integration tests passed successfully.` | ================== 24 passed, 1 skipped, 38 warnings in 0.95s ================== |
+| **API-01** | Run Presenton mapping & Template Registry integration tests | Backend API accepts brand_tokens, validates outline mapping, and enforces RBAC/tenant isolation. | ✅ PASS | `All API contract & integration tests passed successfully.` | ================== 24 passed, 1 skipped, 38 warnings in 0.83s ================== |
 
 ---
 

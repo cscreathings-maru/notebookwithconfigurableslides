@@ -53,6 +53,7 @@ services:
         - NEXT_PUBLIC_DEV_MODE=false
         - NEXT_PUBLIC_LITE_MODE=${NEXT_PUBLIC_LITE_MODE:-true}
         - NEXT_PUBLIC_DEFAULT_TENANT_NAME=${NEXT_PUBLIC_DEFAULT_TENANT_NAME:-Demo Workspace}
+        - NEXT_PUBLIC_PRESENTON_UI_URL=${NEXT_PUBLIC_PRESENTON_UI_URL:-https://editor.umarsyukri.com}
     env_file: .env.lite
     depends_on: [orchestrator]
     labels:
@@ -171,8 +172,8 @@ services:
       - "127.0.0.1:${PRESENTON_EXPOSED_PORT:-8100}:80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.presenton.rule=PathPrefix(`/presenton`)"
-      - "traefik.http.routers.presenton.priority=5"
+      - "traefik.http.routers.presenton.rule=Host(`${PRESENTON_DOMAIN:-editor.umarsyukri.com}`) || PathPrefix(`/presenton`) || PathPrefix(`/api/v1/ppt`) || PathPrefix(`/api/v1/mock`)"
+      - "traefik.http.routers.presenton.priority=10"
       - "traefik.http.middlewares.presenton-strip.stripprefix.prefixes=/presenton"
       - "traefik.http.routers.presenton.middlewares=presenton-strip"
       - "traefik.http.services.presenton.loadbalancer.server.port=80"

@@ -137,12 +137,12 @@ record_test("TPL-07", "Templates", "Verify AI-Powered PPTX Dropzone and token ex
             "Dropzone calls extractTemplateTokens and displays AI Extraction Summary card with confidence score.",
             passed, ev)
 
-# TPL-08: SlideEditorModal & Interactive Slide Editing
+# TPL-08: SlideEditorModal & Interactive Presentation Canvas Launchpad
 editor_modal_path = FRONTEND_DIR / "src/components/project/SlideEditorModal.tsx"
-passed_mod, ev_mod = check_file_contains(editor_modal_path, [r"iframe", r"presenton", r"Interactive Slide"])
+passed_mod, ev_mod = check_file_contains(editor_modal_path, [r"editor\.umarsyukri\.com", r"presenton", r"Interactive Presentation"])
 passed_ui, ev_ui = check_file_contains(tpl_page_path, [r"SlideEditorModal", r"Test in Editor"])
-record_test("TPL-08", "Templates", "Check SlideEditorModal iframe integration and Presenton editor buttons",
-            "SlideEditorModal hosts Presenton interactive canvas in iframe; Test in Editor button wired in templates table.",
+record_test("TPL-08", "Templates", "Check SlideEditorModal launchpad integration and Presenton editor buttons",
+            "SlideEditorModal hosts Presenton interactive canvas launchpad opening subdomain tab; Test in Editor button wired in templates table.",
             passed_mod and passed_ui, f"{ev_mod}; {ev_ui}")
 
 # TPL-09: Draft Status Enforcement
