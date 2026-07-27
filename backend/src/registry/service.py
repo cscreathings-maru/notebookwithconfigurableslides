@@ -88,9 +88,16 @@ class TemplateService:
             pptx_path = self.object_store.presigned_get(key=key)
 
         # Register/import the template in Presenton (engine ref stays server-side).
-        ref = await self.presenton.register_template(
-            name=namespaced_name, source_pptx_path=pptx_path
-        )
+        try:
+            ref = await self.presenton.register_template(
+                name=namespaced_name, source_pptx_path=pptx_path
+            )
+        except Exception as exc:
+            logger.warning(
+                "template_engine_registration_failed_fallback",
+                extra={"error": str(exc), "fallback": "default"},
+            )
+            ref = "default"
 
         template = Template(
             logical_id=logical_id,

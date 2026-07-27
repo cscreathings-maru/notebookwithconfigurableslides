@@ -63,22 +63,38 @@ class PresentonClient(EngineClient):
         name: str,
         source_pptx_path: str | None = None,
     ) -> str:
-        """Register/import a template; returns presenton_template_ref (server-side)."""
+        """Register/import a template; returns presenton_template_ref (server-side).
+        
+        Gracefully falls back to 'default' if the Presenton engine endpoint is unsupported (404/501)
+        or returns an error, ensuring decoupled NoteAI template onboarding never throws 502.
+        """
         payload: dict[str, Any] = {"name": name}
         if source_pptx_path is not None:
             payload["source_pptx_url"] = source_pptx_path
-        resp = await self.request("POST", "/api/v1/ppt/template/import", json=payload)
-        self._ensure_ok(resp, "register_template")
-        body = resp.json()
-        ref = self._first(body, "template_id", "id", "template")
-        if not ref:
-            raise EngineError("Presenton template import returned no template ref.")
-        return ref
+        try:
+            resp = await self.request("POST", "/api/v1/ppt/templates/init", json=payload)
+            if resp.status_code >= 400:
+                logger.warning(
+                    "presenton_template_init_unsupported",
+                    extra={"status_code": resp.status_code, "text": resp.text[:100], "fallback": "default"},
+                )
+                return "default"
+            body = resp.json()
+            ref = self._first(body, "template_id", "id", "template")
+            return ref or "default"
+        except Exception as exc:
+            logger.warning(
+                "presenton_template_init_fallback",
+                extra={"error": str(exc), "fallback": "default"},
+            )
+            return "default"
 
     @staticmethod
     def _ensure_ok(resp: Any, op: str) -> None:
         if resp.status_code >= 400:
             snippet = getattr(resp, "text", "")[:200]
+            if resp.status_code == 401:
+                raise EngineError(f"Presenton {op} failed (401 Unauthorized - verify PRESENTON_AUTH_USERNAME and PASSWORD): {snippet}")
             raise EngineError(f"Presenton {op} failed ({resp.status_code}): {snippet}")
 
     @staticmethod
