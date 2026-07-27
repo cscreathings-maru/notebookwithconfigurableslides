@@ -86,6 +86,23 @@ export interface Template {
   created_at: string;
 }
 
+export interface ExtractedTokensResponse {
+  status: string;
+  filename: string;
+  extracted_tokens: {
+    primary_color: string;
+    secondary_color: string;
+    accent_color: string;
+    typography: string;
+    aspect_ratio: string;
+    detected_fonts?: string[];
+    detected_colors?: string[];
+  };
+  confidence_score: number;
+  summary: string;
+}
+
+
 export interface Profile {
   id: string;
   version: number;
@@ -379,6 +396,11 @@ export const api = {
     form.set("brand_tokens", JSON.stringify(input.brand_tokens ?? {}));
     if (input.pptx) form.set("file", input.pptx);
     return request<Template>("/templates", { method: "POST", body: form });
+  },
+  extractTemplateTokens: (file: File) => {
+    const form = new FormData();
+    form.set("file", file);
+    return request<ExtractedTokensResponse>("/templates/extract-tokens", { method: "POST", body: form });
   },
   approveTemplate: (id: string) =>
     request<Template>(`/templates/${id}/approve`, { method: "POST" }),

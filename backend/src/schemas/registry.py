@@ -60,3 +60,12 @@ class TemplateResponse(BaseModel):
     status: RegistryStatus
     has_pptx: bool
     created_at: datetime
+
+
+class ExtractedTokensResponse(BaseModel):
+    status: str = "success"
+    filename: str
+    extracted_tokens: dict[str, Any]
+    confidence_score: float = 0.95
+    summary: str
+

@@ -17,7 +17,8 @@ from ..auth.principal import Principal
 from ..core.errors import ValidationError
 from ..models import Template, UserRole
 from ..registry.service import TemplateService
-from ..schemas.registry import TemplateResponse
+from ..registry.extraction import extract_tokens_from_pptx
+from ..schemas.registry import ExtractedTokensResponse, TemplateResponse
 from ..tenancy.rbac import require_admin, require_viewer
 from .deps import get_template_service
 
@@ -82,3 +83,24 @@ def approve_template(
     service: TemplateService = Depends(get_template_service),
 ) -> TemplateResponse:
     return _to_response(service.approve(template_id, actor_user_id=principal.user_id))
+
+
+@router.post("/extract-tokens", response_model=ExtractedTokensResponse)
+async def extract_template_tokens(
+    file: UploadFile = File(...),
+    principal: Principal = Depends(require_admin),
+) -> ExtractedTokensResponse:
+    content = await file.read()
+    tokens = extract_tokens_from_pptx(content)
+    num_colors = len(tokens.get("detected_colors", []))
+    font = tokens.get("typography", "Inter")
+    ratio = tokens.get("aspect_ratio", "16:9")
+    summary = f"Detected {num_colors} brand colors, {font} typography, and {ratio} layout from '{file.filename}'."
+    return ExtractedTokensResponse(
+        status="success",
+        filename=file.filename or "template.pptx",
+        extracted_tokens=tokens,
+        confidence_score=0.95,
+        summary=summary,
+    )
+

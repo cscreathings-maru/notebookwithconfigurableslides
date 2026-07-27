@@ -95,10 +95,11 @@ print("[2/5] Verifying Rich Template Configuration (TPL-01 to TPL-06)...")
 tpl_page_path = FRONTEND_DIR / "src/app/(app)/templates/page.tsx"
 
 # TPL-01: 4 distinct configuration sections
-passed, ev = check_file_contains(tpl_page_path, [r"General Settings", r"Brand & Aesthetics", r"Layout & Formatting", r"Base Template Upload"])
+passed, ev = check_file_contains(tpl_page_path, [r"General Settings", r"Brand & Aesthetics", r"Layout & Formatting", r"AI-Powered Template Onboarding|Base Template Upload"])
 record_test("TPL-01", "Templates", "Check template creator for 4 configuration sections",
             "Rich Template Configurator panel features 4 distinct sections.",
             passed, ev)
+
 
 # TPL-02: General Settings inputs (Name, Audience)
 passed, ev = check_file_contains(tpl_page_path, [r"targetAudience|audience", r"templateName|name"])
@@ -129,6 +130,28 @@ passed, ev = check_file_contains(tpl_page_path, [r'brand_tokens', r'w-4 h-4 roun
 record_test("TPL-06", "Templates", "Inspect created template table columns and visual preview",
             "Table displays correct Audience, Name, Version, and visual preview of Primary Color in Brand Tokens column.",
             passed, ev)
+
+# TPL-07: AI-Powered Dropzone & Token Extraction
+passed, ev = check_file_contains(tpl_page_path, [r"AI-Powered Template Onboarding", r"extractTemplateTokens", r"AI Extraction Summary"])
+record_test("TPL-07", "Templates", "Verify AI-Powered PPTX Dropzone and token extraction wiring",
+            "Dropzone calls extractTemplateTokens and displays AI Extraction Summary card with confidence score.",
+            passed, ev)
+
+# TPL-08: SlideEditorModal & Interactive Slide Editing
+editor_modal_path = FRONTEND_DIR / "src/components/project/SlideEditorModal.tsx"
+passed_mod, ev_mod = check_file_contains(editor_modal_path, [r"iframe", r"presenton", r"Interactive Slide"])
+passed_ui, ev_ui = check_file_contains(tpl_page_path, [r"SlideEditorModal", r"Test in Editor"])
+record_test("TPL-08", "Templates", "Check SlideEditorModal iframe integration and Presenton editor buttons",
+            "SlideEditorModal hosts Presenton interactive canvas in iframe; Test in Editor button wired in templates table.",
+            passed_mod and passed_ui, f"{ev_mod}; {ev_ui}")
+
+# TPL-09: Draft Status Enforcement
+reg_service_path = BACKEND_DIR / "src/registry/service.py"
+passed, ev = check_file_contains(reg_service_path, [r"status=RegistryStatus\.draft"])
+record_test("TPL-09", "Templates", "Verify newly created templates enforce Draft status",
+            "Template creation initialized with status=RegistryStatus.draft in registry service.",
+            passed, ev)
+
 
 # -------------------------------------------------------------------------
 # 3. Profiles Manager UI
@@ -252,7 +275,7 @@ record_test("USG-03", "Usage", "Verify styling of Usage by User and Audit Log ta
 print("\nExecuting Backend API & Contract Test Suite (pytest)...")
 venv_pytest = BACKEND_DIR / ".venv/bin/pytest"
 if venv_pytest.exists():
-    cmd = [str(venv_pytest), "tests/contract/", "tests/integration/test_registry.py", "tests/integration/test_generation.py"]
+    cmd = [str(venv_pytest), "tests/unit/test_template_extraction.py", "tests/contract/", "tests/integration/test_registry.py", "tests/integration/test_generation.py"]
     res = subprocess.run(cmd, cwd=str(BACKEND_DIR), capture_output=True, text=True)
     if res.returncode == 0:
         passed_backend = True

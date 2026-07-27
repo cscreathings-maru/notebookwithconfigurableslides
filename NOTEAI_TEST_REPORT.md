@@ -1,6 +1,6 @@
 # NoteAI UI/UX & Feature Automated Test Report
 
-**Generated Date:** 2026-07-25 20:33:54  
+**Generated Date:** 2026-07-26 11:19:05  
 **Project:** NoteAI (Rebranded from Maru / Presentation Notebook LLM)  
 **Execution Type:** Automated Verification Suite (Static Analysis, UI Token Verification, API Contract Tests)  
 
@@ -10,7 +10,7 @@
 
 | Total Tests | Passed | Failed | Success Rate | Status |
 | :---: | :---: | :---: | :---: | :---: |
-| **26** | **26** | **0** | **100.0%** | **PASSED** |
+| **29** | **29** | **0** | **100.0%** | **PASSED** |
 
 ### Key Achievements Verified:
 1. **Global Rebranding (NoteAI)**: Confirmed 100% replacement of legacy branding across metadata, navigation sidebar, login card, and workspace titles.
@@ -43,12 +43,15 @@
 
 | Test ID | Action | Expected Result | Status | Evidence | Notes |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| **TPL-01** | Check template creator for 4 configuration sections | Rich Template Configurator panel features 4 distinct sections. | ✅ PASS | `Verified patterns in page.tsx: ['General Settings', 'Brand & Aesthetics', 'Layout & Formatting', 'Base Template Upload']` |  |
+| **TPL-01** | Check template creator for 4 configuration sections | Rich Template Configurator panel features 4 distinct sections. | ✅ PASS | `Verified patterns in page.tsx: ['General Settings', 'Brand & Aesthetics', 'Layout & Formatting', 'AI-Powered Template Onboarding\|Base Template Upload']` |  |
 | **TPL-02** | Verify General Settings inputs (Name, Audience) | Inputs accept Name and Audience data without errors. | ✅ PASS | `Verified patterns in page.tsx: ['targetAudience\|audience', 'templateName\|name']` |  |
 | **TPL-03** | Verify color pickers and typography dropdown in Brand & Aesthetics | Color pickers update hex values. Font dropdown selects font family. | ✅ PASS | `Verified patterns in page.tsx: ['type="color"', 'primary\|secondary', 'font\|typography', '<select']` |  |
 | **TPL-04** | Check PPTX base template upload area | Drag-and-drop / upload area accepts .pptx files and shows selected filename. | ✅ PASS | `Verified patterns in page.tsx: ['type="file"', '\\.pptx', 'drag\|drop\|upload\|Browse Files']` |  |
 | **TPL-05** | Verify template creation payload maps to brand_tokens | Button shows spinner; payload bundles colors/fonts into brand_tokens JSON. | ✅ PASS | `Verified patterns in page.tsx: ['brand_tokens:', 'primary,', 'secondary,', 'font,']` |  |
 | **TPL-06** | Inspect created template table columns and visual preview | Table displays correct Audience, Name, Version, and visual preview of Primary Color in Brand Tokens column. | ✅ PASS | `Verified patterns in page.tsx: ['brand_tokens', 'w-4 h-4 rounded-full', 'backgroundColor:\\s*primaryColor']` |  |
+| **TPL-07** | Verify AI-Powered PPTX Dropzone and token extraction wiring | Dropzone calls extractTemplateTokens and displays AI Extraction Summary card with confidence score. | ✅ PASS | `Verified patterns in page.tsx: ['AI-Powered Template Onboarding', 'extractTemplateTokens', 'AI Extraction Summary']` |  |
+| **TPL-08** | Check SlideEditorModal iframe integration and Presenton editor buttons | SlideEditorModal hosts Presenton interactive canvas in iframe; Test in Editor button wired in templates table. | ✅ PASS | `Verified patterns in SlideEditorModal.tsx: ['iframe', 'presenton', 'Interactive Slide']; Verified patterns in page.tsx: ['SlideEditorModal', 'Test in Editor']` |  |
+| **TPL-09** | Verify newly created templates enforce Draft status | Template creation initialized with status=RegistryStatus.draft in registry service. | ✅ PASS | `Verified patterns in service.py: ['status=RegistryStatus\\.draft']` |  |
 ### 📌 Area: Profiles
 
 | Test ID | Action | Expected Result | Status | Evidence | Notes |
@@ -96,7 +99,7 @@
 
 | Test ID | Action | Expected Result | Status | Evidence | Notes |
 | :--- | :--- | :--- | :---: | :--- | :--- |
-| **API-01** | Run Presenton mapping & Template Registry integration tests | Backend API accepts brand_tokens, validates outline mapping, and enforces RBAC/tenant isolation. | ✅ PASS | `All API contract & integration tests passed successfully.` | ================== 21 passed, 1 skipped, 38 warnings in 0.81s ================== |
+| **API-01** | Run Presenton mapping & Template Registry integration tests | Backend API accepts brand_tokens, validates outline mapping, and enforces RBAC/tenant isolation. | ✅ PASS | `All API contract & integration tests passed successfully.` | ================== 24 passed, 1 skipped, 38 warnings in 0.95s ================== |
 
 ---
 

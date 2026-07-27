@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { SlideEditorModal } from "@/components/project/SlideEditorModal";
 import { localeToLanguageName } from "@/lib/i18n/config";
 import { useLocale, useT } from "@/lib/i18n/LocaleProvider";
 import type { MessageKey } from "@/lib/i18n/messages/en";
@@ -57,6 +58,10 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   const [decks, setDecks] = useState<Generation[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const [editorOpen, setEditorOpen] = useState(false);
+  const [activeEditorGenId, setActiveEditorGenId] = useState<string | null>(null);
+
 
   const loadDecks = useCallback(() => {
     api.listGenerations(projectId).then(setDecks).catch(() => setDecks([]));
@@ -337,6 +342,17 @@ export function StudioPanel({ projectId }: { projectId: string }) {
                 
                 {g.status === "ready" && (
                   <div className="flex shrink-0 gap-1.5 ml-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setActiveEditorGenId(g.id);
+                        setEditorOpen(true);
+                      }}
+                      className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7 border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300"
+                      title="Open interactive drag-and-edit slide canvas in Presenton"
+                    >
+                      <span>🎨 Editor</span>
+                    </button>
                     {g.artifacts.pptx && (
                       <button
                         type="button"
@@ -374,6 +390,15 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           </div>
         </div>
       </div>
+
+      <SlideEditorModal
+        isOpen={editorOpen}
+        onClose={() => setEditorOpen(false)}
+        title="🎨 Interactive Presentation Slide Editor"
+        subtitle={`Polishing deck generation (${activeEditorGenId?.slice(0, 8)}...) — move components and adjust font styling`}
+        editorUrl={`/presenton/presentation/${activeEditorGenId}`}
+      />
     </div>
   );
 }
+
