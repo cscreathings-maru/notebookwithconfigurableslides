@@ -177,13 +177,20 @@ async def test_full_pipeline_to_ready_and_download(
     assert "presenton_presentation_id" not in detail
     assert "pptx_uri" not in detail
 
-    # Download returns a signed URL, not the engine path.
+    # T-1.5: the deck streams through the API. A presigned MinIO URL names an
+    # internal Docker host the browser cannot resolve, so bytes are proxied instead.
     dl = client.get(
         f"/api/v1/generations/{gen_body['id']}/download?format=pptx",
         headers=auth(seed.author_a_sub),
-    ).json()
-    assert "objectstore.test" in dl["url"]
-    assert "/app_data/" not in dl["url"]
+    )
+    assert dl.status_code == 200
+    assert dl.headers["content-type"] == (
+        "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+    )
+    assert f"deck-{gen_body['id']}.pptx" in dl.headers["content-disposition"]
+    assert len(dl.content) > 0
+    # No engine path or storage key leaks through the response.
+    assert "/app_data/" not in dl.headers.get("content-disposition", "")
 
 
 def test_generation_blocked_until_sources_ready(client, seed: Fixtures) -> None:

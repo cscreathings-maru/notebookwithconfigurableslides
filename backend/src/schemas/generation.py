@@ -66,9 +66,3 @@ class GenerationResponse(BaseModel):
     error: str | None
     created_by: uuid.UUID | None
     created_at: datetime
-
-
-class DownloadResponse(BaseModel):
-    format: str
-    url: str
-    expires_in: int

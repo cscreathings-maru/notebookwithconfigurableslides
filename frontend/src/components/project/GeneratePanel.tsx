@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 
+import { saveBlob } from "@/lib/download";
 import { api, ApiError, type Generation } from "@/services/api";
 
 const TERMINAL = new Set(["ready", "failed"]);
@@ -61,8 +62,8 @@ export function GeneratePanel({
   const download = async (format: "pptx" | "pdf") => {
     if (!generation) return;
     try {
-      const { url } = await api.downloadGeneration(generation.id, format);
-      window.open(url, "_blank", "noopener,noreferrer");
+      const blob = await api.downloadGeneration(generation.id, format);
+      saveBlob(blob, `deck-${generation.id}.${format}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Download failed");
     }

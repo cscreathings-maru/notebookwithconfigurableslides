@@ -1,17 +1,20 @@
-"""Generations router — enqueue, poll status/report, list history, signed download.
+"""Generations router — enqueue, poll status/report, list history, artifact download.
 
-Engine ids/paths stay server-side: downloads return a short-lived signed object-store
-URL, never the engine path or MinIO key.
+Engine ids/paths stay server-side. Deck bytes are streamed through this process rather
+than presigned: MinIO is reachable only on the internal Docker network, so a presigned
+URL names a host (`http://minio:9000`) that no browser can resolve. Streaming keeps the
+artifact behind the existing tenant + RBAC guards and adds no new public surface.
 """
 
 from __future__ import annotations
 
+import io
 import uuid
 
 from fastapi import APIRouter, Depends, Query, status
+from fastapi.responses import StreamingResponse
 
 from ..auth.principal import Principal
-from ..core.config import get_settings
 from ..core.errors import NotFoundError, ValidationError
 from ..generation.freeform_service import FreeformGenerationService
 from ..generation.repository import GenerationRepository
@@ -19,7 +22,6 @@ from ..generation.service import GenerationService
 from ..models import Generation, GenerationStatus
 from ..schemas.generation import (
     ArtifactAvailability,
-    DownloadResponse,
     GenerationCreate,
     GenerationResponse,
 )
@@ -48,6 +50,12 @@ _PUBLIC_PARAM_KEYS = frozenset(
         "web_search",
     }
 )
+
+
+_ARTIFACT_MEDIA_TYPES = {
+    "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "pdf": "application/pdf",
+}
 
 
 def _public_params(params: dict | None) -> dict:
@@ -121,14 +129,19 @@ def get_generation(
     return _to_response(repo.get(generation_id))
 
 
-@router.get("/generations/{generation_id}/download", response_model=DownloadResponse)
+@router.get("/generations/{generation_id}/download")
 def download_generation(
     generation_id: uuid.UUID,
     fmt: str = Query("pptx", alias="format", pattern="^(pptx|pdf)$"),
     _: Principal = Depends(require_viewer),
     repo: GenerationRepository = Depends(get_generation_repository),
     object_store: ObjectStore = Depends(get_object_store),
-) -> DownloadResponse:
+) -> StreamingResponse:
+    """Stream the rendered deck to the browser.
+
+    Read fully into memory before streaming: decks are single-digit MB and the store's
+    Protocol exposes `get_bytes`, not a chunked reader. Revisit if deck sizes grow.
+    """
     generation = repo.get(generation_id)
     if generation.status is not GenerationStatus.ready:
         raise ValidationError("Generation is not ready for download.")
@@ -137,7 +150,12 @@ def download_generation(
     if not key:
         raise NotFoundError(f"No {fmt} artifact for this generation.")
 
-    url = object_store.presigned_get(key=key)
-    return DownloadResponse(
-        format=fmt, url=url, expires_in=get_settings().ingest_presign_ttl_seconds
+    data = object_store.get_bytes(key=key)
+    return StreamingResponse(
+        io.BytesIO(data),
+        media_type=_ARTIFACT_MEDIA_TYPES[fmt],
+        headers={
+            "Content-Disposition": f'attachment; filename="deck-{generation.id}.{fmt}"',
+            "Content-Length": str(len(data)),
+        },
     )

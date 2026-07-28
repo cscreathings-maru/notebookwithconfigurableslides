@@ -36,10 +36,10 @@ export class ApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Attach auth, send, and turn a non-2xx into an ApiError. Response body untouched. */
+async function authorizedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = getToken();
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
   // Let the browser set the multipart boundary for FormData uploads.
   const isFormData = typeof FormData !== "undefined" && init.body instanceof FormData;
   if (init.body && !isFormData && !headers.has("Content-Type")) {
@@ -62,8 +62,23 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, code, message);
   }
 
+  return res;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const headers = new Headers(init.headers);
+  headers.set("Accept", "application/json");
+  const res = await authorizedFetch(path, { ...init, headers });
+
   if (res.status === 204) return undefined as T;
   return (await res.json()) as T;
+}
+
+/** Binary variant. Artifacts stream through the API behind the same bearer token, so
+ *  they cannot be fetched by navigation (`window.open`) -- that sends no Authorization. */
+async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const res = await authorizedFetch(path, init);
+  return await res.blob();
 }
 
 export type RegistryStatus = "draft" | "approved" | "archived";
@@ -76,6 +91,10 @@ export type Tone =
   | "sales_pitch";
 export type Verbosity = "concise" | "standard" | "text-heavy";
 
+/** Whether the slide engine accepted this template. `fallback` means decks render
+ *  with the engine's stock theme, not the uploaded branding. */
+export type RegistrationStatus = "registered" | "fallback" | "failed";
+
 export interface Template {
   id: string;
   version: number;
@@ -83,6 +102,8 @@ export interface Template {
   brand_tokens: Record<string, unknown>;
   status: RegistryStatus;
   has_pptx: boolean;
+  registration_status: RegistrationStatus;
+  registration_error: string | null;
   created_at: string;
 }
 
@@ -374,9 +395,7 @@ export const api = {
   listGenerations: (projectId: string) =>
     request<Generation[]>(`/projects/${projectId}/generations`),
   downloadGeneration: (id: string, format: "pptx" | "pdf") =>
-    request<{ format: string; url: string; expires_in: number }>(
-      `/generations/${id}/download?format=${format}`,
-    ),
+    requestBlob(`/generations/${id}/download?format=${format}`),
   setLlmConfig: (input: {
     provider: string;
     base_url: string;

@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { SlideEditorModal } from "@/components/project/SlideEditorModal";
+import { saveBlob } from "@/lib/download";
 import { localeToLanguageName } from "@/lib/i18n/config";
 import { useLocale, useT } from "@/lib/i18n/LocaleProvider";
 import type { MessageKey } from "@/lib/i18n/messages/en";
@@ -138,8 +139,8 @@ export function StudioPanel({ projectId }: { projectId: string }) {
 
   const download = async (g: Generation, fmt: "pptx" | "pdf") => {
     try {
-      const { url } = await api.downloadGeneration(g.id, fmt);
-      window.open(url, "_blank");
+      const blob = await api.downloadGeneration(g.id, fmt);
+      saveBlob(blob, `deck-${g.id}.${fmt}`);
     } catch {
       setError(t("studio.downloadUnavailable"));
     }

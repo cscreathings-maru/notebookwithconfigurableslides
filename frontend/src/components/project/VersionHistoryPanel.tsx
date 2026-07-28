@@ -33,6 +33,13 @@ export function VersionHistoryPanel({
     load();
   }, [load, refreshKey]);
 
+  // Release the last preview's object URL when the panel goes away.
+  useEffect(() => {
+    return () => {
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+    };
+  }, [previewUrl]);
+
   const toggle = (id: string) => {
     setDiff(null);
     setSelected((prev) => {
@@ -64,8 +71,12 @@ export function VersionHistoryPanel({
   const preview = async (g: Generation) => {
     setError(null);
     try {
-      const { url } = await api.downloadGeneration(g.id, g.artifacts.pdf ? "pdf" : "pptx");
-      setPreviewUrl(url);
+      const blob = await api.downloadGeneration(g.id, g.artifacts.pdf ? "pdf" : "pptx");
+      // Replace rather than accumulate: each preview leaks its object URL otherwise.
+      setPreviewUrl((current) => {
+        if (current) URL.revokeObjectURL(current);
+        return URL.createObjectURL(blob);
+      });
     } catch {
       setError("Preview unavailable.");
     }
