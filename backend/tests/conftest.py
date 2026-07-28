@@ -25,6 +25,9 @@ os.environ.update(
     LITE_MODE="false",
     ENVIRONMENT="test",
     LOG_LEVEL="WARNING",
+    # Retry behaviour is asserted, but the waiting between attempts is not. Without
+    # this the engine tests spend seconds asleep, and a slow suite gets skipped.
+    ENGINE_BACKOFF_BASE_SECONDS="0",
 )
 
 import jwt  # noqa: E402

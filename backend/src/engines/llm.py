@@ -5,6 +5,11 @@ mode that is the global OpenRouter config. Two surfaces:
 - `talking_points`: CONTROLLED JSON prompt for governed outline building.
 - `chat`: a generic grounded completion reused by chat-with-sources and the guide.
 A per-call `model` override lets the Studio model dropdown pick a model per request.
+
+Extends `EngineClient`, so it inherits the same timeout, bounded backoff on 5xx/429,
+and circuit breaker as the other engines. Because the provider is resolved per request
+rather than at construction, calls use absolute URLs and per-request auth headers —
+httpx leaves an absolute URL untouched by the client's `base_url`.
 """
 
 from __future__ import annotations
@@ -19,8 +24,21 @@ from ..core.config import get_settings
 from ..core.errors import EngineError
 from ..core.logging import get_logger
 from ..outline.builder import LlmResult
+from .base import EngineClient
 
 logger = get_logger("orchestrator.llm")
+
+# Operator-facing readings of the provider's non-retryable failures. These reach the
+# log only — the client-facing message stays opaque (core/errors.py no-leak posture).
+# Without them, a billing problem and a typo in the model slug are the same string.
+_FAILURE_HINTS = {
+    400: "LLM provider rejected the request payload",
+    401: "LLM provider rejected the API key",
+    402: "LLM provider account has insufficient credit",
+    403: "LLM provider denied access to this model",
+    404: "Model slug not found — check the configured model",
+    413: "Prompt exceeded the provider's size limit",
+}
 
 
 @dataclass
@@ -30,9 +48,11 @@ class ChatAnswer:
     tokens_out: int
 
 
-class LlmClient:
+class LlmClient(EngineClient):
     def __init__(self, *, client: httpx.AsyncClient | None = None):
-        self._client = client  # injectable for tests
+        # base_url is empty by design: the provider comes from the tenant's config on
+        # every call, so requests carry absolute URLs. `client` keeps the test seam.
+        super().__init__(name="llm", base_url="", client=client)
 
     async def _complete(
         self,
@@ -63,25 +83,36 @@ class LlmClient:
 
         # OpenRouter uses HTTP-Referer / X-Title for app attribution; other
         # OpenAI-compatible providers simply ignore them.
-        client = self._client or httpx.AsyncClient(
-            base_url=base_url.rstrip("/"),
-            timeout=settings.engine_timeout_seconds,
+        resp = await self.request(
+            "POST",
+            f"{base_url.rstrip('/')}/chat/completions",
+            json=payload,
             headers={
                 "Authorization": f"Bearer {api_key}",
                 "HTTP-Referer": settings.public_base_url,
                 "X-Title": settings.app_name,
             },
         )
-        owns = self._client is None
-        try:
-            resp = await client.post("/chat/completions", json=payload)
-        finally:
-            if owns:
-                await client.aclose()
 
         if resp.status_code >= 400:
+            self._log_failure(resp, model=model)
             raise EngineError("LLM provider request failed.")
         return resp.json()
+
+    @staticmethod
+    def _log_failure(resp: httpx.Response, *, model: str) -> None:
+        """Record what actually went wrong, server-side, with enough to act on."""
+        logger.error(
+            "llm_request_failed",
+            extra={
+                "status_code": resp.status_code,
+                "hint": _FAILURE_HINTS.get(
+                    resp.status_code, "LLM provider returned an error"
+                ),
+                "model": model,
+                "body_snippet": (getattr(resp, "text", "") or "")[:200],
+            },
+        )
 
     async def talking_points(
         self,

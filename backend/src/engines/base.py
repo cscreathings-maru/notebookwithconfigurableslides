@@ -88,6 +88,19 @@ class EngineClient:
                 self._breaker.record_failure()
                 if attempt >= self._max_retries:
                     break
+                # Name the transient cause. Without this a retried 429 is invisible
+                # until retries are exhausted, and then only as a generic failure.
+                status = getattr(getattr(exc, "response", None), "status_code", None)
+                logger.warning(
+                    "engine_request_retrying",
+                    extra={
+                        "engine": self.name,
+                        "attempt": attempt,
+                        "max_retries": self._max_retries,
+                        "status_code": status,
+                        "cause": type(exc).__name__,
+                    },
+                )
                 await asyncio.sleep(self._backoff_base * (2 ** (attempt - 1)))
 
         logger.error(
