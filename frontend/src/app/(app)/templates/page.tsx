@@ -504,6 +504,7 @@ export default function TemplatesPage() {
         onClose={() => setEditorOpen(false)}
         title="🎨 Interactive Template & Slide Editor"
         subtitle={`Testing drag-and-edit layout components for template reference (${activeEditorId?.slice(0, 8)}...)`}
+        editorUrl={`/editor/template-preview?id=${activeEditorId}`}
       />
     </section>
   );

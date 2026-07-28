@@ -396,7 +396,8 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         onClose={() => setEditorOpen(false)}
         title="🎨 Interactive Presentation Slide Editor"
         subtitle={`Polishing deck generation (${activeEditorGenId?.slice(0, 8)}...) — move components and adjust font styling`}
-        editorUrl={`${process.env.NEXT_PUBLIC_PRESENTON_UI_URL || "https://editor.umarsyukri.com"}/presentation/${activeEditorGenId}`}
+        // Since Presenton is hosted under /editor/, we can use relative paths
+        editorUrl={`/editor/presentation/${activeEditorGenId}`}
       />
     </div>
   );
