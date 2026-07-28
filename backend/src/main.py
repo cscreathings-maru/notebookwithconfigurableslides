@@ -59,7 +59,10 @@ def create_app() -> FastAPI:
     app.add_middleware(CorrelationIdMiddleware)
     register_exception_handlers(app)
 
+    # Root mount for container probes, /api mount so Traefik routes them -- Traefik
+    # sends "/" to the frontend, so the root pair alone is unreachable once deployed.
     app.include_router(health_router)
+    app.include_router(health_router, prefix="/api")
     app.include_router(api_v1)
     return app
 
