@@ -56,7 +56,7 @@ That instruction was followed. **No attempt was made to fetch upstream Presenton
 | `T-0.2` | Capture mutated runtime state as config | 🔴 | **BLOCKED** | — | §5 M1 |
 | `T-0.3` | Back up live runtime data | 🟠 | **BLOCKED** | — | §5 M3 |
 | `T-0.4` | Reconcile the working tree | ⚪ | **DONE** | `git status --short` → empty | `53d3d45`, `1e99a1e`, `9b79e59` |
-| `T-0.5` | Prove reproducibility | ⚪ | **BLOCKED** | — | depends on T-0.1 |
+| `T-0.5` | Prove reproducibility | ⚪ | **PARTIAL** | 4/5 services build from a clean tree | retested 2026-07-28, see `PHASE-1-REPORT.md` §5 M2 |
 
 ### T-0.4 — DONE (detail)
 
