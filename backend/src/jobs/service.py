@@ -61,7 +61,11 @@ class JobService:
         return job, True
 
     async def dispatch(self, job: Job) -> None:
-        """Hand the job to the async worker tier (no-op if no enqueuer wired)."""
+        """Hand the job to the async worker tier (no-op if no enqueuer wired).
+
+        Callers must not use this directly for newly created rows -- the worker can
+        dequeue before the row is committed. Use `commit_and_dispatch`.
+        """
         if self.enqueuer is None:
             logger.warning("job_dispatch_skipped_no_enqueuer", extra={"job_id": str(job.id)})
             return
@@ -72,3 +76,15 @@ class JobService:
             str(job.tenant_id),
             _job_id=job.idempotency_key,
         )
+
+    async def commit_and_dispatch(self, job: Job) -> None:
+        """Commit the job's transaction, then enqueue it.
+
+        `get_db()` commits at dependency teardown -- after the handler returns. Enqueuing
+        inside the handler therefore publishes the job to workers before its row exists,
+        and a worker that dequeues first finds nothing. Arq then refuses to re-enqueue the
+        same idempotency key for `keep_result` seconds, so the generation is stuck at
+        `queued` permanently. Committing first closes the window.
+        """
+        self.repo.db.commit()
+        await self.dispatch(job)

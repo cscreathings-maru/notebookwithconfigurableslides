@@ -138,7 +138,7 @@ class GenerationService:
             idempotency_key=f"generate:{generation.id}",
             ref_id=generation.id,
         )
-        await self.job_service.dispatch(job)
+        await self.job_service.commit_and_dispatch(job)
 
         MeteringService(self.gen_repo.db, self.gen_repo.tenant_id).record(
             action="generation.created",

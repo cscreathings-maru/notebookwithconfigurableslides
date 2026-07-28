@@ -138,7 +138,7 @@ class SourceService:
             idempotency_key=f"ingest:{source.id}",
             ref_id=source.id,
         )
-        await self.job_service.dispatch(job)
+        await self.job_service.commit_and_dispatch(job)
         logger.info(
             "source_queued",
             extra={"source_id": str(source.id), "kind": source.kind.value},

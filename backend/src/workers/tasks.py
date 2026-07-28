@@ -25,7 +25,16 @@ from ..tenancy.llm_config import TenantLlmConfigService
 logger = get_logger("orchestrator.worker")
 
 
+class JobRowMissing(RuntimeError):
+    """A dispatched job's row is not visible to the worker.
+
+    Raised rather than returned so Arq retries. Returning quietly is what let the
+    enqueue-before-commit race strand generations at `queued` with no diagnostic.
+    """
+
+
 def _load_job(db, job_id: uuid.UUID, tenant_id: uuid.UUID) -> Job | None:
+    """Quiet lookup, for paths where an absent row is not itself the failure."""
     job = db.get(Job, job_id)
     # Defense in depth: never touch a job outside the dispatched tenant.
     if job is None or job.tenant_id != tenant_id:
@@ -34,14 +43,24 @@ def _load_job(db, job_id: uuid.UUID, tenant_id: uuid.UUID) -> Job | None:
     return job
 
 
+def _require_job(db, job_id: uuid.UUID, tenant_id: uuid.UUID) -> Job:
+    """Load the dispatched job, or fail loudly so Arq retries."""
+    job = _load_job(db, job_id, tenant_id)
+    if job is None:
+        logger.error(
+            "worker_job_row_absent",
+            extra={"job_id": str(job_id), "tenant_id": str(tenant_id)},
+        )
+        raise JobRowMissing(f"Job {job_id} was dispatched but its row is not visible.")
+    return job
+
+
 async def run_ingest(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any) -> None:
     job_uuid = uuid.UUID(job_id)
     tenant_uuid = uuid.UUID(tenant_id)
 
     with SessionLocal() as db:
-        job = _load_job(db, job_uuid, tenant_uuid)
-        if job is None:
-            return
+        job = _require_job(db, job_uuid, tenant_uuid)
         source_id = job.ref_id
         job.status = JobStatus.running
         job.attempts += 1
@@ -111,9 +130,7 @@ async def run_generate(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: 
     tenant_uuid = uuid.UUID(tenant_id)
 
     with SessionLocal() as db:
-        job = _load_job(db, job_uuid, tenant_uuid)
-        if job is None:
-            return
+        job = _require_job(db, job_uuid, tenant_uuid)
         generation_id = job.ref_id
         job.status = JobStatus.running
         job.attempts += 1

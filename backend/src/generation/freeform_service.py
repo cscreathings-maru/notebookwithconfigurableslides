@@ -116,7 +116,7 @@ class FreeformGenerationService:
             idempotency_key=f"generate:{generation.id}",
             ref_id=generation.id,
         )
-        await self.job_service.dispatch(job)
+        await self.job_service.commit_and_dispatch(job)
         logger.info(
             "freeform_generation_queued",
             extra={"generation_id": str(generation.id), "source": payload.content_source},
