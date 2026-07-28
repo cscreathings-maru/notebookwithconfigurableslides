@@ -95,7 +95,10 @@ If that VPS is lost today, the product is unrecoverable.
 5. Update `deploy/docker-compose.lite.yml` so `context:` points at the in-repo path. **This is the only line of existing config Phase 0 may change.**
 
 **Acceptance:**
-- `git ls-files | grep -c presenton` returns > 0
+- `git ls-files | grep -c '^presenton/'` returns > 0
+  > Anchor the pattern. A bare `grep -c presenton` matches `backend/src/engines/presenton.py` and
+  > `backend/tests/contract/test_presenton_mapping.py` — the orchestrator's own *client* — and
+  > passes the gate while the engine source is still missing.
 - `docker compose -f deploy/docker-compose.lite.yml build presenton` succeeds **from a fresh clone into an empty directory**
 - No secret, API key, or `.env` file is present in the committed tree
 
@@ -193,8 +196,8 @@ docker compose -f deploy/docker-compose.lite.yml ps
 ## Verification
 
 ```bash
-# 1. Presenton is tracked
-git ls-files | grep -c presenton                    # > 0
+# 1. Presenton engine source is tracked (anchor the pattern — see T-0.1)
+git ls-files | grep -c '^presenton/'                # > 0
 
 # 2. No secrets committed
 git grep -InE '(sk-or-|sk-[A-Za-z0-9]{20,}|BEGIN.*PRIVATE KEY)' -- . ':!*.example*'   # → empty
@@ -225,7 +228,7 @@ Phase 0 has little automated testing by nature — its evidence is **transcripts
 
 | # | Criterion |
 |---|---|
-| **G1** | Presenton source is committed; `git ls-files \| grep -c presenton` > 0 |
+| **G1** | Presenton source is committed; `git ls-files \| grep -c '^presenton/'` > 0 |
 | **G2** | `docker compose build` succeeds from a fresh clone into an empty directory |
 | **G3** | The stack starts and reaches a configured state with **no** `docker exec` intervention |
 | **G4** | No secret, key, or `.env` is present in the committed tree (scan output attached) |
