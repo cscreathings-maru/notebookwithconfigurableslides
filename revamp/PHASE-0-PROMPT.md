@@ -68,6 +68,12 @@ If that VPS is lost today, the product is unrecoverable.
 
 ## Tasks
 
+> **Ordering correction (found in execution, 2026-07-28).** Do **T-0.4 step 3** — the
+> `.gitignore` work — **before T-0.1**. Vendoring the Presenton source into a repo that does
+> not yet ignore `presenton/app_data/` commits live API keys on the first `git add presenton/`.
+> The numbering below is kept stable so task ids stay comparable across reports; only the
+> execution order changes.
+
 ### T-0.1 — Recover and vendor the Presenton source 🔴
 
 **Problem:** the slide engine exists only as untracked files on one host.
