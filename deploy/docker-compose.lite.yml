@@ -175,8 +175,8 @@ services:
       - "127.0.0.1:${PRESENTON_EXPOSED_PORT:-8100}:80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.presenton.rule=PathPrefix(`/editor`)"
-      - "traefik.http.routers.presenton.priority=10"
+      - "traefik.http.routers.presenton.rule=PathPrefix(`/editor`) || PathPrefix(`/api/v1/ppt`) || PathPrefix(`/api/runtime-config`) || PathPrefix(`/api/telemetry-status`) || PathPrefix(`/api/user-config`) || PathPrefix(`/api/validate-layout-code`) || PathPrefix(`/api/read-file`) || PathPrefix(`/api/mock`) || PathPrefix(`/api/v1/admin`) || PathPrefix(`/api/v1/auth/token`) || PathPrefix(`/api/export-presentation`) || PathPrefix(`/api/v1/auth/status`) || PathPrefix(`/app_data`) || PathPrefix(`/images`) || PathPrefix(`/uploads`) || PathPrefix(`/fonts`)"
+      - "traefik.http.routers.presenton.priority=20"
       - "traefik.http.services.presenton.loadbalancer.server.port=80"
       - "traefik.docker.network=notebookllm-lite_edge"
     networks: [edge, appnet]
