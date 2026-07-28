@@ -24,3 +24,6 @@ presenton/app_data/
 presenton/**/node_modules/
 presenton/**/.next/
 *.db
+
+# Vitest coverage output
+frontend/coverage/
