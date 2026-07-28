@@ -7,3 +7,20 @@ deploy/.env
 deploy/.env.*
 !deploy/.env.example
 !deploy/.env.lite.example
+
+# Test/build artifacts (T-0.4). backend/.coverage was tracked in error.
+.coverage
+*.coverage
+.coverage.*
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+__pycache__/
+*.egg-info/
+frontend/tsconfig.tsbuildinfo
+
+# Presenton runtime state — never commit. Contains API keys and generated decks.
+presenton/app_data/
+presenton/**/node_modules/
+presenton/**/.next/
+*.db
