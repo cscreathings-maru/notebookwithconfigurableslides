@@ -47,11 +47,13 @@ This major release transforms the application from **Maru / Presentation Noteboo
 
 ### 🧪 Quality Assurance & Automated Testing
 
-- **Automated Verification Suite**: Built `automation/verify_noteai_revamp.py` which programmatically validates:
-  - Frontend static analysis and UI design token adherence.
-  - Component wiring and payload mapping for templates and profiles.
-  - Backend API contract execution via Python `pytest`.
-- **Test Reports & Documentation**: Added `TEST_CASES.md` and `NOTEAI_TEST_REPORT.md` providing 100% verification coverage across 26 distinct test criteria.
+- **Automated Verification Suite**: Built `automation/verify_noteai_revamp.py`.
+  > **Corrected 2026-07-29 — see the entry at the top of this file.** This script
+  > matched regex patterns against source files. It executed no application code and
+  > could not detect any runtime defect. Deleted in Phase 2 (T-2.6).
+- **Test Reports & Documentation**: Added `TEST_CASES.md` and `NOTEAI_TEST_REPORT.md`.
+  > **Corrected 2026-07-29.** The claimed "100% coverage across 26 criteria" measured
+  > the regex script above, not the product.
 - **Production Build Verification**: Confirmed zero TypeScript errors and successful Next.js production builds (`npm run build`).
 
 ---

@@ -36,7 +36,7 @@
 ## 🏗️ Architecture & Tech Stack
 
 - **Frontend**: Next.js 14 (App Router), React 18, Vanilla Tailwind CSS, TypeScript, i18n localization.
-- **Backend**: FastAPI (Python 3.14), Alembic, Object Store integration, Presenton presentation generation engine.
+- **Backend**: FastAPI (Python 3.11+), Alembic, Object Store integration, Presenton presentation generation engine.
 - **Authentication**: OIDC SSO integration with local developer fallback mode (`DEV_MODE`).
 
 ---
@@ -67,17 +67,37 @@ npm run dev                     # Start Next.js dev server on :3000
 
 ---
 
-## 🧪 Automated Testing & Verification Suite
+## 🧪 Testing
 
-NoteAI includes a built-in automated verification script that validates UI design tokens, component wiring, and backend API contracts:
+Three tiers, each of which executes real code. **What they cover is stated honestly below** — see [revamp/TECH-DEBT.md](./revamp/TECH-DEBT.md) for what is knowingly untested.
 
 ```bash
-# Run the verification suite from the project root
-python3 automation/verify_noteai_revamp.py
+# Backend — unit, integration, contract (SQLite-backed, no engines required)
+cd backend && ./.venv/bin/python -m pytest tests/ -q --cov=src
+
+# Frontend — Vitest + React Testing Library
+cd frontend && npm run test:coverage
+
+# End-to-end smoke — needs a RUNNING stack
+docker compose -f deploy/docker-compose.lite.yml up -d
+cd frontend && E2E_BASE_URL=http://localhost:8099 npm run test:e2e
 ```
 
-- **Report Generated**: Check [NOTEAI_TEST_REPORT.md](./NOTEAI_TEST_REPORT.md) for detailed pass/fail evidence across 26 distinct verification criteria (100% pass rate).
-- **Test Cases Reference**: See [TEST_CASES.md](./TEST_CASES.md) for step-by-step manual and automated testing scenarios.
+| Tier | Location | Covers |
+|---|---|---|
+| Backend | `backend/tests/` | Tenant + engine isolation, quota/metering, the LLM client, health, ingestion, generation |
+| Frontend | `frontend/src/**/*.test.ts(x)` | API client, URL resolution, download, section builder, en/id key parity |
+| E2E smoke | `frontend/e2e/smoke/` | Shell, project lifecycle, generation + download, editor, branding |
+
+**Two E2E journeys (`04-editor`, `05-branding`) skip rather than pass** while the Presenton engine is not vendored — they report as skipped, never as green.
+
+> **A note on the previous suite.** Earlier versions of this README cited
+> `automation/verify_noteai_revamp.py` as evidence of "100% pass across 26 criteria".
+> That script asserted that *source files matched regex patterns* — it started no
+> server and issued no request. It reported success while `/editor` returned 404,
+> downloads were unreachable from a browser, branding never reached the renderer, and
+> retrieval leaked across projects. It has been deleted; the archived report it produced
+> carries a banner to the same effect.
 
 ---
 *Developed by CSC Deathings / NoteAI Team.*
