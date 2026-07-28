@@ -160,6 +160,7 @@ services:
       context: ../presenton-custom
     environment:
       DISABLE_AUTH: "true"
+      MIGRATE_DATABASE_ON_STARTUP: "true"
       LLM: "custom"                          # OpenAI-compatible → OpenRouter
       CUSTOM_LLM_URL: ${OPENROUTER_BASE_URL}
       CUSTOM_LLM_API_KEY: ${OPENROUTER_API_KEY}
