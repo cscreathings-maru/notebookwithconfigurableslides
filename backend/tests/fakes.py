@@ -7,6 +7,7 @@ live engine, MinIO, Redis, or Arq.
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from src.engines.presenton import TemplateRegistration
@@ -43,6 +44,7 @@ class FakeOpenNotebook:
         status_sequence: list[str] | None = None,
         analysis_ref: str = "analysis_fake",
         add_source_error: Exception | None = None,
+        corpus: dict[str, str] | None = None,
     ) -> None:
         self.notebook_id = notebook_id
         self.source_id = source_id
@@ -50,6 +52,11 @@ class FakeOpenNotebook:
         self._statuses = list(status_sequence or ["ready"])
         self.analysis_ref = analysis_ref
         self.add_source_error = add_source_error
+        # {engine_source_ref: text}. Models the real engine's ONE GLOBAL INDEX -- every
+        # project's content is visible to every query, which is exactly the condition
+        # the caller-side scoping in search() has to survive.
+        self.corpus = dict(corpus or {})
+        self.searched_scopes: list[set[str]] = []
         self.calls: list[str] = []
 
     async def create_notebook(self, *, name: str, namespace: str) -> str:
@@ -76,9 +83,27 @@ class FakeOpenNotebook:
         self.calls.append("run_transformation")
         return self.analysis_ref
 
-    async def search(self, *, notebook_id: str, query: str) -> list[dict[str, Any]]:
+    async def search(
+        self, *, allowed_source_refs: Collection[str], query: str
+    ) -> list[dict[str, Any]]:
+        """Serve from the global corpus, honouring the caller's allow-set.
+
+        Mirrors the real client: the engine itself cannot scope, so anything not in
+        `allowed_source_refs` must not come back.
+        """
         self.calls.append("search")
-        return [{"text": "Revenue grew 12% YoY.", "source_ref": self.analysis_ref}]
+        allowed = {str(r).strip() for r in allowed_source_refs if str(r).strip()}
+        self.searched_scopes.append(allowed)
+        if not allowed:
+            return []
+        if self.corpus:
+            return [
+                {"text": text, "source_ref": ref}
+                for ref, text in self.corpus.items()
+                if ref in allowed
+            ]
+        # No corpus configured: one canned snippet, attributed to an allowed source.
+        return [{"text": "Revenue grew 12% YoY.", "source_ref": sorted(allowed)[0]}]
 
 
 class FakeLlm:

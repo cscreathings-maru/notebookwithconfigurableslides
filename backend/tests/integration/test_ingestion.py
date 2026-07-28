@@ -18,7 +18,7 @@ from src.api import deps as api_deps
 from src.core.db import SessionLocal
 from src.ingestion.service import ingest_source
 from src.main import app
-from src.models import Source, SourceStatus
+from src.models import Source
 from tests.conftest import Fixtures, auth
 from tests.fakes import FakeObjectStore, FakeOpenNotebook
 

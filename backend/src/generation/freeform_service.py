@@ -150,10 +150,14 @@ class FreeformGenerationService:
             return guide.summary
 
         if source == "notebook":
+            # Scope retrieval to this project's own sources -- the engine index is shared.
             snippets = []
             if project.on_notebook_id:
+                allowed = SourceRepository(
+                    self.gen_repo.db, self.gen_repo.tenant_id
+                ).engine_source_refs(project.id)
                 snippets = await self.on_client.search(
-                    notebook_id=project.on_notebook_id,
+                    allowed_source_refs=allowed,
                     query="comprehensive synthesis of all key content",
                 )
             grounding = "\n".join(

@@ -6,10 +6,14 @@ configure the embedding model inside Open Notebook (see deploy docs). The demo
 pipeline only needs create-notebook, add-source and status polling. Grounding for
 the outline comes from search (best-effort — never fatal). The transformation step
 is intentionally a no-op: the outline builder never consumes analysis_ref.
+
+**Search is not scoped by the engine.** See `search()` — the instance is a single
+shared index, and isolation is enforced on this side of the boundary.
 """
 
 from __future__ import annotations
 
+from collections.abc import Collection
 from typing import Any
 
 from ..core.config import get_settings
@@ -20,6 +24,27 @@ from .base import EngineClient
 logger = get_logger("orchestrator.open_notebook")
 
 _API = "/api"
+
+# Grounding snippets returned to callers.
+_GROUNDING_LIMIT = 10
+# Post-filtering discards hits belonging to other projects, so ask the engine for more
+# than we need or recall collapses on a busy shared instance. The engine caps limit at 1000.
+_GROUNDING_OVER_FETCH = 6
+
+
+def _result_source_ref(item: dict[str, Any]) -> str | None:
+    """The engine source id a search hit came from, or None if unresolvable.
+
+    `parent_id` is the only field that names the *source* for both result kinds the
+    engine emits: `fn::vector_search` selects `source.id as parent_id` for both
+    `source_embedding` and `source_insight` rows, but aliases `id` to the insight's
+    own id in the latter. Preferring `id` would fail to match a legitimate hit and
+    silently drop it.
+    """
+    raw = item.get("parent_id") or item.get("source_id") or item.get("source_ref")
+    if raw is None:
+        return None
+    return str(raw).strip() or None
 
 # Open Notebook status strings normalized to the orchestrator's three-state model
 # (ready / failed / processing). Unrecognized values are treated as processing,
@@ -124,13 +149,29 @@ class OpenNotebookClient(EngineClient):
         """
         return source_id
 
-    async def search(self, *, notebook_id: str, query: str) -> list[dict[str, Any]]:
-        """Grounding snippets for outline building — best-effort, never fatal.
+    async def search(
+        self, *, allowed_source_refs: Collection[str], query: str
+    ) -> list[dict[str, Any]]:
+        """Grounding snippets restricted to the caller's own sources.
 
-        Open Notebook search is global (not notebook-scoped) and returns free-form
-        result dicts; map them to the {text, source_ref} shape the builder expects.
-        Any failure (e.g. no embedding model yet) degrades to no grounding.
+        Open Notebook's `POST /api/search` accepts no notebook filter: `fn::vector_search`
+        and `fn::text_search` scan every embedding in the instance, so one shared engine
+        serves every project of every tenant. Scoping is therefore enforced here, against
+        the engine source ids recorded on the caller's own tenant-scoped Postgres rows --
+        not against anything the engine reports about itself.
+
+        **Fails closed.** An empty allow-set, or a result whose source cannot be resolved,
+        yields no grounding rather than unscoped grounding: an empty guide is a visible,
+        recoverable bug, while a guide grounded in another tenant's documents is a breach.
+
+        Availability failures (no embedding model yet, engine down) still degrade to no
+        grounding -- that best-effort posture is correct and unchanged.
         """
+        allowed = {str(ref).strip() for ref in allowed_source_refs if str(ref).strip()}
+        if not allowed:
+            logger.warning("on_search_skipped_unscoped")
+            return []
+
         try:
             resp = await self.request(
                 "POST",
@@ -138,7 +179,7 @@ class OpenNotebookClient(EngineClient):
                 json={
                     "query": query,
                     "type": "vector",
-                    "limit": 10,
+                    "limit": _GROUNDING_LIMIT * _GROUNDING_OVER_FETCH,
                     "search_sources": True,
                     "search_notes": False,
                     "minimum_score": 0.0,
@@ -153,6 +194,7 @@ class OpenNotebookClient(EngineClient):
             return []
 
         mapped: list[dict[str, Any]] = []
+        dropped = 0
         for item in results:
             if not isinstance(item, dict):
                 continue
@@ -163,9 +205,23 @@ class OpenNotebookClient(EngineClient):
                 or item.get("chunk")
                 or ""
             )
-            ref = item.get("source_id") or item.get("id") or item.get("source_ref")
-            if text:
-                mapped.append({"text": str(text), "source_ref": ref})
+            if not text:
+                continue
+            ref = _result_source_ref(item)
+            if ref is None or ref not in allowed:
+                dropped += 1
+                continue
+            mapped.append({"text": str(text), "source_ref": ref})
+            if len(mapped) >= _GROUNDING_LIMIT:
+                break
+
+        if dropped:
+            # Expected on a shared instance; a sudden drop to zero kept means the id
+            # formats have diverged, which fails closed and shows up as empty grounding.
+            logger.info(
+                "on_search_filtered",
+                extra={"kept": len(mapped), "dropped": dropped},
+            )
         return mapped
 
     @staticmethod

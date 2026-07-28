@@ -10,7 +10,6 @@ import uuid
 
 from fastapi import APIRouter, Depends, status
 
-from ..auth.dependencies import get_current_principal
 from ..auth.principal import Principal
 from ..models import StakeholderProfile, UserRole
 from ..registry.service import ProfileService

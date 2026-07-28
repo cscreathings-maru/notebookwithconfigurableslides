@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from sqlalchemy import select
 
 from ..models import Job
 from ..tenancy.repository import TenantScopedRepository

@@ -1,27 +1,33 @@
-"""Contract test for the Open Notebook ingest/analyze calls (pinned version).
+"""Contract test for the Open Notebook calls the orchestrator depends on.
 
-Pins the exact HTTP surface the orchestrator depends on. A MockTransport asserts
-each client method issues the expected method + path + body and parses the pinned
-response shape. If the upstream contract drifts, these fail loudly in CI instead of
-silently in production (constitution principle IV).
+Pins the exact HTTP surface. A MockTransport asserts each client method issues the
+expected method + path + body and parses the pinned response shape, so upstream drift
+fails loudly in CI instead of silently in production (constitution principle IV).
+
+**Verified against the pinned image** `lfnovo/open_notebook:v1-latest`
+(digest `sha256:e53f90d6…`) by reading `/app/api/main.py` and `/app/api/routers/`:
+
+| Call | Route | Source |
+|---|---|---|
+| create_notebook | `POST /api/notebooks` | `routers/notebooks.py:132` |
+| add_source | `POST /api/sources/json` | `routers/sources.py:708` |
+| get_source_status | `GET /api/sources/{id}/status` | `routers/sources.py:843` |
+| _is_embedded | `GET /api/sources/{id}` | `routers/sources.py:755` |
+| search | `POST /api/search` | `routers/search.py:21` |
+
+Every router mounts with `prefix="/api"` (`main.py:383-399`) — there is no version
+segment. This module previously pinned an assumed `/api/v1/...` surface referencing an
+undefined `OPEN_NOTEBOOK_API_VERSION`, and was skipped at module level, so none of its
+assertions had run since the client was rewritten (tech debt TD-12).
 """
 
 from __future__ import annotations
 
+import json
+
 import httpx
-import pytest
 
-# This module pins the OLD assumed Open Notebook contract (/api/v1/notebooks, a
-# pinned OPEN_NOTEBOOK_API_VERSION, per-call provider_config). The client was
-# rewritten to the real /api surface (see engines/open_notebook.py), so these
-# assertions no longer describe reality. Skipped pending a rewrite against the
-# verified real API (Phase 0 probe output).
-pytest.skip(
-    "Open Notebook contract predates the real-API rewrite; needs realignment.",
-    allow_module_level=True,
-)
-
-from src.engines.open_notebook import OpenNotebookClient  # noqa: E402
+from src.engines.open_notebook import OpenNotebookClient
 
 BASE = "http://open-notebook.test"
 
@@ -32,93 +38,137 @@ def _client(handler) -> OpenNotebookClient:
     return OpenNotebookClient(client=http)
 
 
-async def test_create_notebook_pinned_call() -> None:
+def _recorder(status: int, payload: dict):
+    """A handler that records the request and replies with `payload`."""
     seen: dict = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
         seen["method"] = request.method
         seen["path"] = request.url.path
-        import json
+        seen["body"] = json.loads(request.content) if request.content else None
+        return httpx.Response(status, json=payload)
 
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(201, json={"id": "nb_123"})
+    return handler, seen
 
-    client = _client(handler)
-    notebook_id = await client.create_notebook(name="Acme Q3", namespace="acme")
 
-    assert notebook_id == "nb_123"
+async def test_create_notebook_pinned_call() -> None:
+    # Arrange
+    handler, seen = _recorder(201, {"id": "notebook:nb_123"})
+
+    # Act
+    notebook_id = await _client(handler).create_notebook(name="Acme Q3", namespace="acme")
+
+    # Assert
+    assert notebook_id == "notebook:nb_123"
     assert seen["method"] == "POST"
-    assert seen["path"] == f"/api/{OPEN_NOTEBOOK_API_VERSION}/notebooks"
+    assert seen["path"] == "/api/notebooks"
     assert seen["body"]["name"] == "Acme Q3"
-    assert seen["body"]["namespace"] == "acme"
+    # The real NotebookCreate takes name + description; namespace rides in the latter.
+    assert "acme" in seen["body"]["description"]
 
 
 async def test_add_source_pinned_call() -> None:
-    seen: dict = {}
+    # Arrange
+    handler, seen = _recorder(201, {"id": "source:src_456"})
 
-    def handler(request: httpx.Request) -> httpx.Response:
-        import json
-
-        seen["method"] = request.method
-        seen["path"] = request.url.path
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(202, json={"id": "src_456", "status": "processing"})
-
-    client = _client(handler)
-    source_id = await client.add_source(
-        notebook_id="nb_123",
-        uri="https://objectstore.test/acme/p1/doc.pdf",
-        provider_config={"provider": "deepseek", "api_key": "sk-x"},
+    # Act
+    source_id = await _client(handler).add_source(
+        notebook_id="notebook:nb_123",
+        uri="https://objectstore.test/tenant/doc.pdf",
+        provider_config={"provider": "deepseek"},
     )
 
-    assert source_id == "src_456"
+    # Assert
+    assert source_id == "source:src_456"
     assert seen["method"] == "POST"
-    assert seen["path"] == f"/api/{OPEN_NOTEBOOK_API_VERSION}/notebooks/nb_123/sources"
-    assert seen["body"]["uri"].endswith("doc.pdf")
-    # BYOK provider config is passed per-request to the engine (engine contract).
-    assert seen["body"]["provider"]["provider"] == "deepseek"
+    assert seen["path"] == "/api/sources/json"
+    assert seen["body"]["notebooks"] == ["notebook:nb_123"]
+    assert seen["body"]["type"] == "link"
+    assert seen["body"]["url"] == "https://objectstore.test/tenant/doc.pdf"
+    assert seen["body"]["embed"] is True
 
 
-async def test_get_source_status_pinned_call() -> None:
-    seen: dict = {}
+async def test_source_status_maps_engine_states() -> None:
+    # Arrange / Act / Assert -- each engine string collapses to our three-state model
+    for raw, expected in [
+        ("completed", "ready"),
+        ("indexed", "ready"),
+        ("failed", "failed"),
+        ("cancelled", "failed"),
+    ]:
+        handler, seen = _recorder(200, {"status": raw})
+        status = await _client(handler).get_source_status(source_id="source:src_456")
+        assert status == expected, raw
+        assert seen["path"] == "/api/sources/source:src_456/status"
 
+
+async def test_ambiguous_status_falls_back_to_the_embedded_flag() -> None:
+    """An empty or unknown command status is not authoritative; `embedded` is."""
+
+    # Arrange -- status says nothing useful, the source record says embedded
     def handler(request: httpx.Request) -> httpx.Response:
-        seen["method"] = request.method
-        seen["path"] = request.url.path
-        return httpx.Response(200, json={"status": "ready"})
+        if request.url.path.endswith("/status"):
+            return httpx.Response(200, json={"status": ""})
+        return httpx.Response(200, json={"id": "source:src_456", "embedded": True})
 
-    client = _client(handler)
-    status = await client.get_source_status(source_id="src_456")
+    # Act
+    status = await _client(handler).get_source_status(source_id="source:src_456")
 
+    # Assert
     assert status == "ready"
-    assert seen["method"] == "GET"
-    assert seen["path"] == f"/api/{OPEN_NOTEBOOK_API_VERSION}/sources/src_456"
 
 
-async def test_run_transformation_pinned_call() -> None:
-    seen: dict = {}
-
+async def test_not_embedded_and_unknown_status_stays_processing() -> None:
+    # Arrange
     def handler(request: httpx.Request) -> httpx.Response:
-        import json
+        if request.url.path.endswith("/status"):
+            return httpx.Response(200, json={"status": "queued"})
+        return httpx.Response(200, json={"id": "source:src_456", "embedded": False})
 
-        seen["method"] = request.method
-        seen["path"] = request.url.path
-        seen["body"] = json.loads(request.content)
-        return httpx.Response(200, json={"analysis_ref": "analysis_789"})
+    # Act
+    status = await _client(handler).get_source_status(source_id="source:src_456")
 
-    client = _client(handler)
-    ref = await client.run_transformation(
-        source_id="src_456", provider_config={"provider": "deepseek"}
+    # Assert
+    assert status == "processing"
+
+
+async def test_search_pinned_call_and_response_shape() -> None:
+    # Arrange
+    handler, seen = _recorder(
+        200,
+        {
+            "results": [{"content": "Revenue grew 12%.", "parent_id": "source:src_456"}],
+            "total_count": 1,
+            "search_type": "vector",
+        },
     )
 
-    assert ref == "analysis_789"
+    # Act
+    results = await _client(handler).search(
+        allowed_source_refs={"source:src_456"}, query="revenue"
+    )
+
+    # Assert -- request shape
     assert seen["method"] == "POST"
-    assert seen["path"] == f"/api/{OPEN_NOTEBOOK_API_VERSION}/sources/src_456/transformations"
+    assert seen["path"] == "/api/search"
+    assert seen["body"]["type"] == "vector"
+    assert seen["body"]["search_sources"] is True
+    # Notes carry no source parent, so they cannot be project-scoped -- never searched.
+    assert seen["body"]["search_notes"] is False
+
+    # Assert -- response mapping
+    assert results == [{"text": "Revenue grew 12%.", "source_ref": "source:src_456"}]
 
 
-async def test_failed_status_is_parsed_not_raised() -> None:
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200, json={"status": "failed"})
+async def test_search_availability_failure_degrades_to_no_grounding() -> None:
+    """A 400 (e.g. no embedding model configured) must not fail the caller."""
+    # Arrange
+    handler, _seen = _recorder(400, {"detail": "Vector search requires an embedding model."})
 
-    client = _client(handler)
-    assert await client.get_source_status(source_id="src_456") == "failed"
+    # Act
+    results = await _client(handler).search(
+        allowed_source_refs={"source:src_456"}, query="revenue"
+    )
+
+    # Assert
+    assert results == []

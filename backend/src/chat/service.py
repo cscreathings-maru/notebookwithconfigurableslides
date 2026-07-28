@@ -11,7 +11,7 @@ import uuid
 
 from ..core.config import get_settings
 from ..core.logging import get_logger
-from ..ingestion.repository import ProjectRepository
+from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..models import ChatMessage, ChatRole
 from ..tenancy.llm_config import TenantLlmConfigService
 from .repository import ChatRepository
@@ -40,10 +40,14 @@ class ChatService:
         language = language or get_settings().default_language
         provider_config = TenantLlmConfigService(self.repo.db, self.repo.tenant_id).get_config()
 
+        # Scope retrieval to this project's own sources -- the engine index is shared.
         snippets = []
         if project.on_notebook_id:
+            allowed = SourceRepository(
+                self.repo.db, self.repo.tenant_id
+            ).engine_source_refs(project_id)
             snippets = await self.on_client.search(
-                notebook_id=project.on_notebook_id, query=question
+                allowed_source_refs=allowed, query=question
             )
         grounding = _grounding_text(snippets)
         history = _recent_history(self.repo.list_by_project(project_id))

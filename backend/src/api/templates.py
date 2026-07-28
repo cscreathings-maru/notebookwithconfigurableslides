@@ -12,7 +12,6 @@ import uuid
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
-from ..auth.dependencies import get_current_principal
 from ..auth.principal import Principal
 from ..core.errors import ValidationError
 from ..models import Template, UserRole

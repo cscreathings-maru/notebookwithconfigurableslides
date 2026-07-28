@@ -55,6 +55,7 @@ async def _build_once(profile: Project) -> list[tuple[str, str, int]]:
         on_client=FakeOpenNotebook(),
         llm=FakeLlm(),
         provider_config={"provider": "deepseek", "model": "deepseek-chat"},
+        allowed_source_refs={"src_fake"},
     )
     return [(s.id, s.title, s.order) for s in content.sections]
 
@@ -82,6 +83,7 @@ async def test_outline_is_valid_and_points_reference_real_sections() -> None:
         on_client=FakeOpenNotebook(),
         llm=FakeLlm(),
         provider_config={},
+        allowed_source_refs={"src_fake"},
     )
     section_ids = {s.id for s in content.sections}
     assert all(tp.section_id in section_ids for tp in content.talking_points)

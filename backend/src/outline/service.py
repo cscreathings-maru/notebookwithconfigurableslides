@@ -10,9 +10,9 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
-from ..core.errors import NotFoundError, ValidationError
+from ..core.errors import ValidationError
 from ..core.logging import get_logger
-from ..ingestion.repository import ProjectRepository
+from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..metering.service import MeteringService
 from ..models import Outline
 from ..registry.repository import ProfileRepository
@@ -54,12 +54,17 @@ class OutlineService:
             )
 
         provider_config = TenantLlmConfigService(self.repo.db, self._tenant_id).get_config()
+        # Scope retrieval to this project's own sources -- the engine index is shared.
+        allowed = SourceRepository(self.repo.db, self._tenant_id).engine_source_refs(
+            project_id
+        )
         content, usage = await build_outline(
             project=project,
             profile=profile,
             on_client=self.on_client,
             llm=self.llm,
             provider_config=provider_config,
+            allowed_source_refs=allowed,
         )
 
         outline = Outline(

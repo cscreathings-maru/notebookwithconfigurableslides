@@ -14,7 +14,7 @@ import uuid
 from ..core.config import get_settings
 from ..core.errors import ValidationError
 from ..core.logging import get_logger
-from ..ingestion.repository import ProjectRepository
+from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..models import GuideStatus, NotebookGuide
 from ..tenancy.llm_config import TenantLlmConfigService
 from .repository import GuideRepository
@@ -45,8 +45,12 @@ class GuideService:
         language = language or get_settings().default_language
         provider_config = TenantLlmConfigService(self.repo.db, self.repo.tenant_id).get_config()
 
+        # Scope retrieval to this project's own sources -- the engine index is shared.
+        allowed = SourceRepository(self.repo.db, self.repo.tenant_id).engine_source_refs(
+            project_id
+        )
         snippets = await self.on_client.search(
-            notebook_id=project.on_notebook_id,
+            allowed_source_refs=allowed,
             query="overview, key topics, main findings, and important facts",
         )
         grounding = _grounding_text(snippets)

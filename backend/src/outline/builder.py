@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import re
 import uuid
+from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -95,7 +96,14 @@ async def build_outline(
     on_client,
     llm: Llm,
     provider_config: dict[str, Any],
+    allowed_source_refs: Collection[str],
 ) -> tuple[OutlineContent, OutlineUsage]:
+    """Build a governed outline.
+
+    `allowed_source_refs` scopes retrieval to the project's own sources; the engine's
+    search index is shared across every project and tenant. Passed in rather than
+    looked up here so the builder stays free of repository dependencies.
+    """
     sections = sections_from_profile(profile)
     if not sections:
         raise ValidationError("Profile has no section_structure to build an outline from.")
@@ -103,7 +111,7 @@ async def build_outline(
     context: list[dict[str, Any]] = []
     if project.on_notebook_id:
         context = await on_client.search(
-            notebook_id=project.on_notebook_id, query=_retrieval_query(profile)
+            allowed_source_refs=allowed_source_refs, query=_retrieval_query(profile)
         )
 
     result = await llm.talking_points(
