@@ -156,7 +156,8 @@ services:
     # ports: ["127.0.0.1:8502:8502", "127.0.0.1:5055:5055"]
 
   presenton:
-    image: ghcr.io/presenton/presenton:latest
+    build:
+      context: ../presenton-custom
     environment:
       LLM: "custom"                          # OpenAI-compatible → OpenRouter
       CUSTOM_LLM_URL: ${OPENROUTER_BASE_URL}
@@ -172,10 +173,8 @@ services:
       - "127.0.0.1:${PRESENTON_EXPOSED_PORT:-8100}:80"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.presenton.rule=Host(`${PRESENTON_DOMAIN:-editor.umarsyukri.com}`) || PathPrefix(`/presenton`) || PathPrefix(`/api/v1/ppt`) || PathPrefix(`/api/v1/mock`)"
+      - "traefik.http.routers.presenton.rule=PathPrefix(`/editor`)"
       - "traefik.http.routers.presenton.priority=10"
-      - "traefik.http.middlewares.presenton-strip.stripprefix.prefixes=/presenton"
-      - "traefik.http.routers.presenton.middlewares=presenton-strip"
       - "traefik.http.services.presenton.loadbalancer.server.port=80"
       - "traefik.docker.network=notebookllm-lite_edge"
     networks: [edge, appnet]

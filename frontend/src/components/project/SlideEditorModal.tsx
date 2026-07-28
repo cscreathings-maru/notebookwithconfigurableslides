@@ -15,13 +15,14 @@ export function SlideEditorModal({
   onClose,
   title = "🎨 Interactive Presentation Canvas Launchpad",
   subtitle = "Move components, resize text boxes, and edit font styling like Google Slides",
-  editorUrl = "/presenton/",
+  editorUrl = "/editor/",
 }: Props) {
   if (!isOpen) return null;
 
-  const defaultBaseUrl = process.env.NEXT_PUBLIC_PRESENTON_UI_URL || "https://editor.umarsyukri.com";
+  // Since Presenton is now hosted on the same domain under /editor/, we can use relative paths or the current origin
+  const defaultBaseUrl = process.env.NEXT_PUBLIC_PRESENTON_UI_URL || ""; 
   const resolvedUrl = editorUrl.startsWith("/presenton")
-    ? editorUrl.replace(/^\/presenton\/?/, `${defaultBaseUrl}/`)
+    ? editorUrl.replace(/^\/presenton\/?/, `${defaultBaseUrl}/editor/`)
     : editorUrl.startsWith("http")
     ? editorUrl
     : `${defaultBaseUrl}${editorUrl.startsWith("/") ? "" : "/"}${editorUrl}`;
@@ -55,16 +56,16 @@ export function SlideEditorModal({
           <div className="bg-blue-50/80 dark:bg-blue-950/40 rounded-xl p-4 border border-blue-200/60 dark:border-blue-900/50 flex flex-col gap-2.5 text-xs text-blue-900 dark:text-blue-200">
             <div className="flex items-center gap-2 font-semibold text-blue-700 dark:text-blue-300">
               <span className="text-sm">⚡</span>
-              <span>Dedicated Subdomain & Fullscreen Canvas</span>
+              <span>Native Integrated Canvas</span>
             </div>
             <p className="leading-relaxed">
-              To prevent browser security restrictions (Basic Auth iframe suppression) and give you 100% workspace real estate, Presenton launches in a clean, dedicated browser tab at <strong>editor.umarsyukri.com</strong>.
+              Presenton launches securely as an integrated editor directly on this domain.
             </p>
             <div className="h-px bg-blue-200/60 dark:bg-blue-800/60 my-0.5" />
             <div className="grid grid-cols-2 gap-2 pt-0.5">
               <div className="flex items-center gap-1.5 text-[11px]">
                 <span>🔐</span>
-                <span>Default Auth: <code>admin / change-me123</code></span>
+                <span>Auto-authenticated</span>
               </div>
               <div className="flex items-center gap-1.5 text-[11px]">
                 <span>💾</span>
