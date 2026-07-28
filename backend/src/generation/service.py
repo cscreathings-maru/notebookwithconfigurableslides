@@ -14,14 +14,13 @@ from ..core.logging import get_logger
 from ..ingestion.repository import SourceRepository
 from ..jobs.service import JobService
 from ..metering.alerts import AlertSink
-from ..metering.quota import QuotaService
-from ..metering.service import MeteringService
 from ..models import Generation, GenerationStatus, JobType, SourceStatus
 from ..outline.repository import OutlineRepository
 from ..outline.schema import OutlineContent
 from ..registry.repository import ProfileRepository, TemplateRepository
 from ..tenancy.llm_config import TenantLlmConfigService
 from .mapper import build_presenton_request
+from .preflight import authorize_generation, meter_generation
 from .repository import GenerationRepository
 
 logger = get_logger("orchestrator.generation")
@@ -105,8 +104,11 @@ class GenerationService:
 
         # Quota gate: block (or flag) when the monthly cap is reached. Runs before
         # any row is written so a blocked attempt doesn't consume quota.
-        QuotaService(self.gen_repo.db, self.gen_repo.tenant_id).enforce(
-            actor_user_id=created_by, alert_sink=self.alert_sink
+        authorize_generation(
+            db=self.gen_repo.db,
+            tenant_id=self.gen_repo.tenant_id,
+            actor_user_id=created_by,
+            alert_sink=self.alert_sink,
         )
 
         provider_config = TenantLlmConfigService(
@@ -140,16 +142,18 @@ class GenerationService:
         )
         await self.job_service.commit_and_dispatch(job)
 
-        MeteringService(self.gen_repo.db, self.gen_repo.tenant_id).record(
-            action="generation.created",
+        meter_generation(
+            db=self.gen_repo.db,
+            tenant_id=self.gen_repo.tenant_id,
+            actor_user_id=created_by,
             resource={
                 "generation_id": str(generation.id),
+                "path": "governed",
                 "profile_version": outline.profile_version,
                 "template_version": profile.template_version,
                 "source_ids": [str(s.id) for s in ready_sources],
                 "skipped_failed_source_ids": [str(s.id) for s in skipped_failed],
             },
-            actor_user_id=created_by,
         )
         logger.info("generation_queued", extra={"generation_id": str(generation.id)})
         return generation

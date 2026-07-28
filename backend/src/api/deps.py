@@ -256,6 +256,7 @@ def get_freeform_generation_service(
     on_client: OpenNotebookClient = Depends(get_open_notebook_client),
     llm: LlmClient = Depends(get_llm_client),
     job_service: JobService = Depends(get_job_service),
+    alert_sink: AlertSink = Depends(get_alert_sink),
 ) -> FreeformGenerationService:
     return FreeformGenerationService(
         gen_repo=gen_repo,
@@ -267,4 +268,5 @@ def get_freeform_generation_service(
         on_client=on_client,
         llm=llm,
         job_service=job_service,
+        alert_sink=alert_sink,
     )

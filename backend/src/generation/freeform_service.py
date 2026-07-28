@@ -16,11 +16,13 @@ from ..core.logging import get_logger
 from ..guide.repository import GuideRepository
 from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..jobs.service import JobService
+from ..metering.alerts import AlertSink
 from ..models import Generation, GenerationStatus, JobType, SourceStatus
 from ..registry.repository import TemplateRepository
 from ..schemas.generation import GenerationCreate
 from ..tenancy.llm_config import TenantLlmConfigService
 from .freeform_mapper import build_freeform_request
+from .preflight import authorize_generation, meter_generation
 from .repository import GenerationRepository
 
 logger = get_logger("orchestrator.generation.freeform")
@@ -39,7 +41,9 @@ class FreeformGenerationService:
         on_client,
         llm,
         job_service: JobService,
+        alert_sink: AlertSink,
     ):
+        self.alert_sink = alert_sink
         self.gen_repo = gen_repo
         self.project_repo = project_repo
         self.source_repo = source_repo
@@ -54,6 +58,15 @@ class FreeformGenerationService:
         self, *, project_id: uuid.UUID, payload: GenerationCreate, created_by: uuid.UUID
     ) -> Generation:
         project = self.project_repo.get(project_id)
+
+        # Same gate as the governed path, before any row is written (T-2.2).
+        authorize_generation(
+            db=self.gen_repo.db,
+            tenant_id=self.gen_repo.tenant_id,
+            actor_user_id=created_by,
+            alert_sink=self.alert_sink,
+        )
+
         provider_config = TenantLlmConfigService(
             self.gen_repo.db, self.gen_repo.tenant_id
         ).get_config()
@@ -117,6 +130,19 @@ class FreeformGenerationService:
             ref_id=generation.id,
         )
         await self.job_service.commit_and_dispatch(job)
+
+        meter_generation(
+            db=self.gen_repo.db,
+            tenant_id=self.gen_repo.tenant_id,
+            actor_user_id=created_by,
+            resource={
+                "generation_id": str(generation.id),
+                "path": "freeform",
+                "content_source": payload.content_source or "custom",
+                "template_version": template_version,
+                "source_ids": ready_source_ids,
+            },
+        )
         logger.info(
             "freeform_generation_queued",
             extra={"generation_id": str(generation.id), "source": payload.content_source},
