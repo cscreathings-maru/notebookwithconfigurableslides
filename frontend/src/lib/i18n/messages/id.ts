@@ -151,6 +151,8 @@ export const id: Partial<Record<MessageKey, string>> = {
   "templates.colVersion": "Versi",
   "templates.colPptx": "PPTX",
   "templates.colStatus": "Status",
+  "templates.registrationFallback": "Tema bawaan",
+  "templates.registrationFailed": "Gagal terdaftar",
   "templates.imported": "terimpor",
   "templates.empty": "Belum ada templat.",
 

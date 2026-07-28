@@ -33,6 +33,8 @@ def _to_response(t: Template) -> TemplateResponse:
         brand_tokens=t.brand_tokens,
         status=t.status,
         has_pptx=t.source_pptx_uri is not None,
+        registration_status=t.registration_status,
+        registration_error=t.registration_error,
         created_at=t.created_at,
     )
 

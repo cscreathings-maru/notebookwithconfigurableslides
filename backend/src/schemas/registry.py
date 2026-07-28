@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..models import RegistryStatus, Tone, Verbosity
+from ..models import RegistrationStatus, RegistryStatus, Tone, Verbosity
 
 
 class ProfileWrite(BaseModel):
@@ -59,6 +59,11 @@ class TemplateResponse(BaseModel):
     brand_tokens: dict[str, Any]
     status: RegistryStatus
     has_pptx: bool
+    # Whether the slide engine actually accepted this template. `fallback` means decks
+    # will render with the stock theme, not the uploaded branding. The engine ref itself
+    # stays server-side -- this exposes the outcome, not the handle.
+    registration_status: RegistrationStatus
+    registration_error: str | None
     created_at: datetime
 
 

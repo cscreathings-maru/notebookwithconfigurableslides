@@ -18,6 +18,7 @@ from ..core.errors import ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..metering.service import MeteringService
 from ..models import (
+    RegistrationStatus,
     RegistryStatus,
     StakeholderProfile,
     Template,
@@ -88,30 +89,37 @@ class TemplateService:
             pptx_path = self.object_store.presigned_get(key=key)
 
         # Register/import the template in Presenton (engine ref stays server-side).
-        try:
-            ref = await self.presenton.register_template(
-                name=namespaced_name, source_pptx_path=pptx_path
-            )
-        except Exception as exc:
-            logger.warning(
-                "template_engine_registration_failed_fallback",
-                extra={"error": str(exc), "fallback": "default"},
-            )
-            ref = "default"
+        # The client already converts every failure into a `fallback` registration, so
+        # there is deliberately no second handler here -- one fallback, one place.
+        registration = await self.presenton.register_template(
+            name=namespaced_name, source_pptx_path=pptx_path
+        )
 
         template = Template(
             logical_id=logical_id,
             version=1,
             name=name,
-            presenton_template_ref=ref,
+            presenton_template_ref=registration.ref,
             source_pptx_uri=source_pptx_uri,
             brand_tokens=brand_tokens,
             status=RegistryStatus.draft,
+            registration_status=registration.status,
+            registration_error=registration.error,
             created_by=created_by,
         )
         self.repo.add(template)
         self._audit("template.created", template, created_by)
-        logger.info("template_created", extra={"template_id": str(logical_id)})
+        if registration.status is not RegistrationStatus.registered:
+            logger.warning(
+                "template_created_with_stock_theme",
+                extra={
+                    "template_id": str(logical_id),
+                    "registration_status": registration.status.value,
+                    "error": registration.error,
+                },
+            )
+        else:
+            logger.info("template_created", extra={"template_id": str(logical_id)})
         return template
 
     def approve(self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None) -> Template:

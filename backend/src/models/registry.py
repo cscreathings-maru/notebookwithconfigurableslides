@@ -35,6 +35,19 @@ class RegistryStatus(str, enum.Enum):
     archived = "archived"
 
 
+class RegistrationStatus(str, enum.Enum):
+    """Outcome of registering a template with the slide engine.
+
+    `fallback` means the template row exists but the engine is rendering with its stock
+    theme -- decks will not carry the uploaded branding. Recorded rather than swallowed
+    so the UI can say so; previously both failure paths silently returned "default".
+    """
+
+    registered = "registered"
+    fallback = "fallback"
+    failed = "failed"
+
+
 class Tone(str, enum.Enum):
     default = "default"
     casual = "casual"
@@ -78,6 +91,12 @@ class Template(UuidPkMixin, Base):
         default=RegistryStatus.draft,
         nullable=False,
     )
+    registration_status: Mapped[RegistrationStatus] = mapped_column(
+        Enum(RegistrationStatus, name="template_registration_status"),
+        default=RegistrationStatus.registered,
+        nullable=False,
+    )
+    registration_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
 

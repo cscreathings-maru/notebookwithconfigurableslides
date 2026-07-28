@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
 import { SlideEditorModal } from "@/components/project/SlideEditorModal";
+import { RegistrationBadge } from "@/components/registry/RegistrationBadge";
 import { StatusBadge } from "@/components/registry/StatusBadge";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type Template } from "@/services/api";
@@ -444,7 +445,13 @@ export default function TemplatesPage() {
                       )}
                     </td>
                     <td className="px-6 py-4">
-                      <StatusBadge status={tpl.status} />
+                      <div className="flex flex-col items-start gap-1.5">
+                        <StatusBadge status={tpl.status} />
+                        <RegistrationBadge
+                          status={tpl.registration_status}
+                          error={tpl.registration_error}
+                        />
+                      </div>
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">

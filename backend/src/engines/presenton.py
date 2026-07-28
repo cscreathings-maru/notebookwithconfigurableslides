@@ -14,14 +14,36 @@ endpoint, so callers pick the format up front.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from typing import Any
 
 from ..core.config import get_settings
 from ..core.errors import EngineError
 from ..core.logging import get_logger
+from ..models import RegistrationStatus
 from .base import EngineClient
 
 logger = get_logger("orchestrator.presenton")
+
+# Engine ref used when registration did not yield a usable template.
+_STOCK_TEMPLATE_REF = "default"
+
+
+@dataclass(frozen=True)
+class TemplateRegistration:
+    """Outcome of a template registration attempt.
+
+    Carries the reason alongside the ref so a fallback stays visible all the way to
+    the UI instead of being flattened into an indistinguishable "default".
+    """
+
+    ref: str
+    status: RegistrationStatus
+    error: str | None
+
+    @classmethod
+    def fallen_back(cls, error: str) -> TemplateRegistration:
+        return cls(ref=_STOCK_TEMPLATE_REF, status=RegistrationStatus.fallback, error=error)
 
 
 class PresentonClient(EngineClient):
@@ -62,11 +84,13 @@ class PresentonClient(EngineClient):
         *,
         name: str,
         source_pptx_path: str | None = None,
-    ) -> str:
-        """Register/import a template; returns presenton_template_ref (server-side).
-        
-        Gracefully falls back to 'default' if the Presenton engine endpoint is unsupported (404/501)
-        or returns an error, ensuring decoupled NoteAI template onboarding never throws 502.
+    ) -> TemplateRegistration:
+        """Register/import a template with the engine.
+
+        Still falls back to the stock theme rather than failing template creation, but
+        reports *which* happened. Returning a bare "default" made a degraded template
+        indistinguishable from a healthy one, so a user whose branding silently never
+        applied had nothing to look at.
         """
         payload: dict[str, Any] = {"name": name}
         if source_pptx_path is not None:
@@ -74,20 +98,24 @@ class PresentonClient(EngineClient):
         try:
             resp = await self.request("POST", "/api/v1/ppt/templates/init", json=payload)
             if resp.status_code >= 400:
+                detail = f"engine returned {resp.status_code}: {resp.text[:200]}"
                 logger.warning(
-                    "presenton_template_init_unsupported",
-                    extra={"status_code": resp.status_code, "text": resp.text[:100], "fallback": "default"},
+                    "presenton_template_init_rejected",
+                    extra={"status_code": resp.status_code, "detail": detail},
                 )
-                return "default"
-            body = resp.json()
-            ref = self._first(body, "template_id", "id", "template")
-            return ref or "default"
-        except Exception as exc:
-            logger.warning(
-                "presenton_template_init_fallback",
-                extra={"error": str(exc), "fallback": "default"},
+                return TemplateRegistration.fallen_back(detail)
+            ref = self._first(resp.json(), "template_id", "id", "template")
+            if not ref:
+                detail = "engine accepted the template but returned no template ref"
+                logger.warning("presenton_template_init_no_ref", extra={"name": name})
+                return TemplateRegistration.fallen_back(detail)
+            return TemplateRegistration(
+                ref=ref, status=RegistrationStatus.registered, error=None
             )
-            return "default"
+        except Exception as exc:
+            detail = f"{type(exc).__name__}: {exc}"
+            logger.warning("presenton_template_init_unreachable", extra={"error": detail})
+            return TemplateRegistration.fallen_back(detail)
 
     @staticmethod
     def _ensure_ok(resp: Any, op: str) -> None:

@@ -9,6 +9,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from src.engines.presenton import TemplateRegistration
+from src.models import RegistrationStatus
+
 
 class FakeObjectStore:
     """In-memory object store with the same surface as the MinIO store."""
@@ -164,15 +167,25 @@ def _pptx_from_markdown(content: str, slides_markdown: Any, n_slides: int) -> by
 class FakePresenton:
     """Fake of the Presenton client surface (registry + generation)."""
 
-    def __init__(self, *, ref_prefix: str = "tref") -> None:
+    def __init__(self, *, ref_prefix: str = "tref", register_error: str | None = None) -> None:
         self.ref_prefix = ref_prefix
+        # When set, registration reports a fallback with this reason (T-1.6).
+        self.register_error = register_error
         self.registered: list[dict[str, Any]] = []
         self.generate_calls: list[dict[str, Any]] = []
         self.files: dict[str, bytes] = {}
 
-    async def register_template(self, *, name: str, source_pptx_path: str | None = None) -> str:
+    async def register_template(
+        self, *, name: str, source_pptx_path: str | None = None
+    ) -> TemplateRegistration:
         self.registered.append({"name": name, "source_pptx_path": source_pptx_path})
-        return f"{self.ref_prefix}_{name}"
+        if self.register_error is not None:
+            return TemplateRegistration.fallen_back(self.register_error)
+        return TemplateRegistration(
+            ref=f"{self.ref_prefix}_{name}",
+            status=RegistrationStatus.registered,
+            error=None,
+        )
 
     async def generate(self, *, params: dict[str, Any]) -> dict[str, Any]:
         self.generate_calls.append(params)
