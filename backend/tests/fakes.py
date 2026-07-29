@@ -201,11 +201,22 @@ class FakePresenton:
         self.files: dict[str, bytes] = {}
 
     async def register_template(
-        self, *, name: str, source_pptx_path: str | None = None
+        self,
+        *,
+        name: str,
+        pptx_bytes: bytes | None = None,
+        pptx_filename: str | None = None,
     ) -> TemplateRegistration:
-        self.registered.append({"name": name, "source_pptx_path": source_pptx_path})
+        """Mirrors the real client: the PPTX *is* the brand (T-1.3).
+
+        Without a deck there is nothing for the engine to derive colours, fonts or
+        layouts from, so registration reports `fallback` rather than success.
+        """
+        self.registered.append({"name": name, "pptx_filename": pptx_filename})
         if self.register_error is not None:
             return TemplateRegistration.fallen_back(self.register_error)
+        if not pptx_bytes:
+            return TemplateRegistration.without_source()
         return TemplateRegistration(
             ref=f"{self.ref_prefix}_{name}",
             status=RegistrationStatus.registered,

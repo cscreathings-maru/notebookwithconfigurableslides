@@ -69,7 +69,6 @@ class TemplateService:
 
         logical_id = uuid.uuid4()
         source_pptx_uri: str | None = None
-        pptx_path: str | None = None
 
         if pptx_filename is not None and pptx_content is not None:
             key = self.object_store.tenant_key(
@@ -86,13 +85,18 @@ class TemplateService:
                 ),
             )
             source_pptx_uri = key
-            pptx_path = self.object_store.presigned_get(key=key)
 
-        # Register/import the template in Presenton (engine ref stays server-side).
+        # Register the template in Presenton (engine ref stays server-side).
         # The client already converts every failure into a `fallback` registration, so
         # there is deliberately no second handler here -- one fallback, one place.
+        #
+        # The PPTX goes as BYTES, not as a presigned URL: the engine's registration
+        # begins with a multipart upload, and it derives the brand from the deck itself
+        # (T-1.3). A URL was never a valid input to that endpoint.
         registration = await self.presenton.register_template(
-            name=namespaced_name, source_pptx_path=pptx_path
+            name=namespaced_name,
+            pptx_bytes=pptx_content,
+            pptx_filename=pptx_filename,
         )
 
         template = Template(

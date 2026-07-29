@@ -81,10 +81,14 @@ def test_template_response_hides_engine_ref_and_pptx(client, seed: Fixtures) -> 
 def test_pptx_import_calls_presenton_namespaced(
     client, seed: Fixtures, presenton: FakePresenton
 ) -> None:
-    _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    body = _create_template(client, seed.admin_a_sub, "Imported", file=True)
     last = presenton.registered[-1]
-    assert last["source_pptx_path"] is not None  # PPTX was handed to the engine
+    # T-1.3: the PPTX reaches the engine as bytes, because the engine derives the
+    # brand from the deck itself. Previously a presigned URL was sent under a field
+    # name the engine does not declare, so every registration 422'd and fell back.
+    assert last["pptx_filename"] == "brand.pptx"
     assert last["name"].startswith("acme__")  # tenant-namespaced
+    assert body["registration_status"] == "registered"
 
 
 def test_viewer_cannot_create_template(client, seed: Fixtures) -> None:

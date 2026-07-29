@@ -28,6 +28,10 @@ logger = get_logger("orchestrator.presenton")
 # Engine ref used when registration did not yield a usable template.
 _STOCK_TEMPLATE_REF = "default"
 
+_PPTX_MEDIA_TYPE = (
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+)
+
 
 @dataclass(frozen=True)
 class TemplateRegistration:
@@ -44,6 +48,24 @@ class TemplateRegistration:
     @classmethod
     def fallen_back(cls, error: str) -> TemplateRegistration:
         return cls(ref=_STOCK_TEMPLATE_REF, status=RegistrationStatus.fallback, error=error)
+
+    @classmethod
+    def without_source(cls) -> TemplateRegistration:
+        """No PPTX was uploaded, so there is nothing for the engine to derive a brand from.
+
+        Distinct from an engine failure: nothing went wrong, the template simply cannot
+        carry branding. Recorded as `fallback` so the UI still warns that decks will
+        render with the stock theme.
+        """
+        return cls(
+            ref=_STOCK_TEMPLATE_REF,
+            status=RegistrationStatus.fallback,
+            error=(
+                "No base PPTX uploaded. The slide engine derives colours, fonts and "
+                "layouts from the uploaded deck — brand tokens alone cannot style a "
+                "presentation. Upload a branded .pptx to apply this template."
+            ),
+        )
 
 
 class PresentonClient(EngineClient):
@@ -83,34 +105,91 @@ class PresentonClient(EngineClient):
         self,
         *,
         name: str,
-        source_pptx_path: str | None = None,
+        pptx_bytes: bytes | None = None,
+        pptx_filename: str | None = None,
     ) -> TemplateRegistration:
-        """Register/import a template with the engine.
+        """Register a branded template with the engine, in the two steps it requires.
 
-        Still falls back to the stock theme rather than failing template creation, but
-        reports *which* happened. Returning a bare "default" made a degraded template
-        indistinguishable from a healthy one, so a user whose branding silently never
-        applied had nothing to look at.
+        **The uploaded PPTX *is* the brand.** `POST /templates/init` takes no colour or
+        font parameters — it derives layouts, fonts and palette from the deck itself
+        (`_prepare_template_source` in the engine's `template.py`). So branding reaches
+        the renderer by getting the PPTX there, not by translating `brand_tokens`.
+
+        Two steps, because `init` cannot accept a file:
+
+        1. `POST /templates/fonts-upload-and-slides-preview` — multipart upload of the
+           PPTX; returns `{pptx_url, slide_image_urls, fonts}`.
+        2. `POST /templates/init` — JSON referencing those, returns the template id.
+
+        The previous single-step call sent `{"name", "source_pptx_url"}`. `InitTemplateRequest`
+        declares `pptx_url` and `slide_image_urls` as **required** and has no
+        `source_pptx_url` field, so every call failed validation with a 422, took the
+        `>= 400` branch, and fell back to the stock theme. That is why configured
+        branding never appeared on a deck.
+
+        Still never hard-fails template creation — but the outcome is recorded, so a
+        degraded template is distinguishable from a healthy one (T-1.6).
         """
-        payload: dict[str, Any] = {"name": name}
-        if source_pptx_path is not None:
-            payload["source_pptx_url"] = source_pptx_path
+        if not pptx_bytes:
+            # Nothing to derive a brand from. Colour pickers alone cannot brand a deck:
+            # the engine has no parameter for them. Recorded, not silently "default".
+            return TemplateRegistration.without_source()
+
         try:
-            resp = await self.request("POST", "/api/v1/ppt/templates/init", json=payload)
+            preview = await self.request(
+                "POST",
+                "/api/v1/ppt/templates/fonts-upload-and-slides-preview",
+                files={
+                    "pptx_file": (
+                        pptx_filename or "template.pptx",
+                        pptx_bytes,
+                        _PPTX_MEDIA_TYPE,
+                    )
+                },
+            )
+            if preview.status_code >= 400:
+                detail = f"preview step returned {preview.status_code}: {preview.text[:200]}"
+                logger.warning("presenton_template_preview_rejected", extra={"detail": detail})
+                return TemplateRegistration.fallen_back(detail)
+
+            body = preview.json()
+            pptx_url = body.get("pptx_url")
+            slide_image_urls = body.get("slide_image_urls") or []
+            if not pptx_url:
+                detail = "preview step returned no pptx_url"
+                logger.warning("presenton_template_preview_incomplete", extra={"name": name})
+                return TemplateRegistration.fallen_back(detail)
+
+            resp = await self.request(
+                "POST",
+                "/api/v1/ppt/templates/init",
+                json={
+                    "pptx_url": pptx_url,
+                    "slide_image_urls": slide_image_urls,
+                    "fonts": body.get("fonts") or {},
+                    "name": name,
+                },
+            )
             if resp.status_code >= 400:
-                detail = f"engine returned {resp.status_code}: {resp.text[:200]}"
+                detail = f"init returned {resp.status_code}: {resp.text[:200]}"
                 logger.warning(
                     "presenton_template_init_rejected",
                     extra={"status_code": resp.status_code, "detail": detail},
                 )
                 return TemplateRegistration.fallen_back(detail)
-            ref = self._first(resp.json(), "template_id", "id", "template")
+
+            # `init` is declared `response_model=str`, so the body is a bare id string,
+            # not an object. Tolerate both shapes rather than assuming.
+            parsed = resp.json()
+            ref = parsed if isinstance(parsed, str) else self._first(
+                parsed, "template_id", "id", "template"
+            )
             if not ref:
                 detail = "engine accepted the template but returned no template ref"
                 logger.warning("presenton_template_init_no_ref", extra={"name": name})
                 return TemplateRegistration.fallen_back(detail)
             return TemplateRegistration(
-                ref=ref, status=RegistrationStatus.registered, error=None
+                ref=str(ref), status=RegistrationStatus.registered, error=None
             )
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"
