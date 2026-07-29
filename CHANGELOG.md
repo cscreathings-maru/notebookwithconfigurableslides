@@ -4,6 +4,52 @@ All notable changes to this project will be documented in this file.
 
 ---
 
+## [Unreleased] - Revamp programme, Phases 0-2
+
+### Corrections to v2.0.0
+
+Several v2.0.0 claims were aspirational rather than shipped. History is not rewritten;
+this records what was actually true and when it landed.
+
+| v2.0.0 claimed | Reality | Landed |
+|---|---|---|
+| "Instant browser downloads" | Presigned against an internal Docker hostname no browser could resolve | Phase 1 (T-1.5) |
+| "Presenton interactive slide editor" | `SlideEditorModal` is a link launcher, and the link carried an id Presenton has never seen | **still open** (TD-06) |
+| "100% verification coverage, 26 criteria" | Measured a regex-over-source script that executed no application code | Script deleted, Phase 2 (T-2.6) |
+| Rich Template Configurator | Tokens are stored correctly and never reach the renderer | **still open** (TD-07) |
+
+### Fixed
+
+- Retrieval was not scoped to the project — a guide, chat answer or deck could be
+  grounded in another project's documents, across tenants with `LITE_MODE=false` (T-2.1)
+- The Studio generation path bypassed quota entirely and emitted no usage record, so
+  `/usage` reported zero for the path users actually use (T-2.2)
+- Generations could stick at `queued` forever: jobs were enqueued before their row was
+  committed, and a worker that found nothing returned silently (T-1.4)
+- Deck downloads were unreachable from a browser (T-1.5)
+- A failed template registration silently fell back to the stock theme with no record,
+  so uploaded branding appeared to work and never applied (T-1.6)
+- LLM failures were indistinguishable — an expired key, exhausted credit and a typo in
+  the model slug produced one identical message (T-2.3)
+- Health endpoints were mounted only at the root, which Traefik routes to the frontend,
+  so nothing in the deployed stack could reach them (T-2.4)
+
+### Added
+
+- Frontend test tier: Vitest + React Testing Library, 66 tests (T-2.5)
+- Playwright smoke journeys against a live stack, replacing the regex script (T-2.6)
+- Engine-tier isolation tests — the layer that had none (T-2.1)
+- Per-dependency `/api/readyz` and compose healthchecks across the stack (T-2.4)
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) and
+  [`revamp/TECH-DEBT.md`](revamp/TECH-DEBT.md)
+
+### Known open
+
+The slide engine is not in version control, which blocks `/editor` routing, the editor
+deep link, and brand tokens reaching the renderer. See `revamp/TECH-DEBT.md`.
+
+---
+
 ## [v2.0.0] - 2026-07-26: NoteAI UI/UX Revamp & Rich Template Configuration
 
 ### 🎯 Overview

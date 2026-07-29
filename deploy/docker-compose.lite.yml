@@ -57,7 +57,6 @@ services:
         - NEXT_PUBLIC_DEV_MODE=false
         - NEXT_PUBLIC_LITE_MODE=${NEXT_PUBLIC_LITE_MODE:-true}
         - NEXT_PUBLIC_DEFAULT_TENANT_NAME=${NEXT_PUBLIC_DEFAULT_TENANT_NAME:-Demo Workspace}
-        - NEXT_PUBLIC_PRESENTON_UI_URL=${NEXT_PUBLIC_PRESENTON_UI_URL:-https://editor.umarsyukri.com}
     env_file: .env.lite
     depends_on:
       orchestrator:
