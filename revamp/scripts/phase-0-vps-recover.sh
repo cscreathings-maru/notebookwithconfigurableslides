@@ -26,8 +26,23 @@ set -euo pipefail
 # ---------------------------------------------------------------- config ----
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-SOURCE_DIR="${PRESENTON_SRC:-$REPO_ROOT/../presenton-custom}"
 VENDOR_DIR="$REPO_ROOT/presenton"
+
+# The compose build context is `../presenton-custom` RELATIVE TO deploy/, where the
+# compose file lives — so it resolves to $REPO_ROOT/presenton-custom, not to the repo's
+# parent. An earlier version of this script resolved it from $REPO_ROOT and reported the
+# source missing while it sat untracked inside the repo. Probe both, repo-root first.
+find_source() {
+  local candidate
+  for candidate in "$REPO_ROOT/presenton-custom" "$REPO_ROOT/../presenton-custom"; do
+    if [[ -d "$candidate" ]]; then
+      (cd "$candidate" && pwd)
+      return 0
+    fi
+  done
+  return 1
+}
+SOURCE_DIR="${PRESENTON_SRC:-$(find_source || true)}"
 BACKUP_DIR="${BACKUP_DIR:-$HOME/noteai-backups}"
 COMPOSE_FILE="$REPO_ROOT/deploy/docker-compose.lite.yml"
 ENV_FILE="$REPO_ROOT/deploy/.env.lite"
@@ -50,8 +65,11 @@ docker info >/dev/null 2>&1 || die "docker daemon unreachable — are you root /
 [[ -d "$REPO_ROOT/.git" ]] || die "not a git repo: $REPO_ROOT"
 ok "repo: $REPO_ROOT"
 
-if [[ ! -d "$SOURCE_DIR" ]]; then
-  die "Presenton source not found at: $SOURCE_DIR
+if [[ -z "$SOURCE_DIR" || ! -d "$SOURCE_DIR" ]]; then
+  die "Presenton source not found. Looked in:
+    $REPO_ROOT/presenton-custom
+    $REPO_ROOT/../presenton-custom
+  (override with PRESENTON_SRC=/path/to/source)
 
 This is the component Phase 0 exists to rescue. Before going further:
   1. Check the build context actually used:
