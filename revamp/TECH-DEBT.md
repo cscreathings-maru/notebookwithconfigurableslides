@@ -38,12 +38,20 @@ Closing `TD-01` closes or unblocks all nine.
 
 ### Recovery path
 
+This work lives on `revamp/phase-1`, **not `main`** — a plain `git pull` on the VPS will
+report "Already up to date" and the script will not exist. Check the branch out first:
+
 ```bash
-cd /var/www/notebookfinal && git pull && bash revamp/scripts/phase-0-vps-recover.sh
+cd /var/www/notebookfinal && git fetch origin && git checkout revamp/phase-1 && git pull
+```
+
+```bash
+bash revamp/scripts/phase-0-vps-recover.sh
 ```
 
 Backs up before touching anything, stages but never commits, and hard-stops if it finds a
-secret in the vendored tree. **Never executed** — syntax-checked only (`bash -n`).
+secret in the vendored tree. **Never executed** — syntax-checked only (`bash -n`). Read it
+before running it.
 
 ---
 
