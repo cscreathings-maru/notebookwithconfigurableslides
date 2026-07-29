@@ -104,6 +104,10 @@ export interface Template {
   has_pptx: boolean;
   registration_status: RegistrationStatus;
   registration_error: string | null;
+  /** Same-origin link to preview this template's layouts in the slide editor,
+   *  composed by the backend from the ENGINE's template id. `null` when the engine
+   *  never accepted the template, so there is nothing to preview. */
+  preview_url: string | null;
   created_at: string;
 }
 

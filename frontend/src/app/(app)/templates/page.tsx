@@ -60,7 +60,7 @@ export default function TemplatesPage() {
   
   // Slide Editor Modal
   const [editorOpen, setEditorOpen] = useState(false);
-  const [activeEditorId, setActiveEditorId] = useState<string | null>(null);
+  const [activeEditor, setActiveEditor] = useState<{ id: string; url: string } | null>(null);
 
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -455,10 +455,14 @@ export default function TemplatesPage() {
                     </td>
                     <td className="px-6 py-4 text-right">
                       <div className="flex items-center justify-end gap-2">
+                        {/* Hidden when the engine holds no template for this row --
+                            previewing would 404, which is what building this URL from
+                            the NoteAI id used to do. */}
+                        {tpl.preview_url && (
                         <button
                           type="button"
                           onClick={() => {
-                            setActiveEditorId(tpl.id);
+                            setActiveEditor({ id: tpl.id, url: tpl.preview_url! });
                             setEditorOpen(true);
                           }}
                           className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 hover:border-blue-500 hover:text-blue-600 transition"
@@ -466,6 +470,7 @@ export default function TemplatesPage() {
                         >
                           <span>🎨 Test in Editor</span>
                         </button>
+                        )}
                         {tpl.status === "draft" && (
                           <button
                             type="button"
@@ -510,8 +515,10 @@ export default function TemplatesPage() {
         isOpen={editorOpen}
         onClose={() => setEditorOpen(false)}
         title="🎨 Interactive Template & Slide Editor"
-        subtitle={`Testing drag-and-edit layout components for template reference (${activeEditorId?.slice(0, 8)}...)`}
-        editorUrl={`/editor/template-preview?id=${activeEditorId}`}
+        subtitle={`Testing drag-and-edit layout components for template reference (${activeEditor?.id.slice(0, 8)}...)`}
+        // Backend-composed from the ENGINE template id. Building it from the NoteAI
+        // logical_id sent Presenton a UUID it had never seen -- "Template not found".
+        editorUrl={activeEditor?.url}
       />
     </section>
   );

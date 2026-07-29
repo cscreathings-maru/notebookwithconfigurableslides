@@ -64,6 +64,10 @@ class TemplateResponse(BaseModel):
     # stays server-side -- this exposes the outcome, not the handle.
     registration_status: RegistrationStatus
     registration_error: str | None
+    # Same-origin link to preview this template's layouts in the slide editor, or None
+    # when there is nothing to preview -- the engine never accepted it. A URL, not the
+    # engine's template id, for the same reason as `Generation.editor_url` (T-1.2).
+    preview_url: str | None
     created_at: datetime
 
 

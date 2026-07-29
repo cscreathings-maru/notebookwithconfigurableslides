@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
@@ -24,6 +25,29 @@ from .deps import get_template_service
 router = APIRouter(prefix="/templates", tags=["templates"])
 
 
+# Presenton is served same-origin under this prefix (T-1.1).
+_EDITOR_BASE_PATH = "/editor"
+# The ref stored when registration did not yield a real engine template.
+_STOCK_TEMPLATE_REF = "default"
+
+
+def _preview_url(t: Template) -> str | None:
+    """Link that previews this template's layouts in the slide editor, or None.
+
+    Composed from `presenton_template_ref` -- the id the ENGINE issued -- not from
+    `logical_id`, which is a Postgres UUID Presenton has never seen. The templates page
+    previously built this URL from `logical_id` and got a truthful "Template not found":
+    the same defect T-1.2 fixed for the generation deep link, on a second surface.
+
+    None when the registration fell back, because "default" is not a real engine
+    template and previewing it would show layouts the user did not upload.
+    """
+    ref = t.presenton_template_ref
+    if not ref or ref == _STOCK_TEMPLATE_REF:
+        return None
+    return f"{_EDITOR_BASE_PATH}/template-preview?id={quote(str(ref))}"
+
+
 def _to_response(t: Template) -> TemplateResponse:
     return TemplateResponse(
         id=t.logical_id,
@@ -34,6 +58,7 @@ def _to_response(t: Template) -> TemplateResponse:
         has_pptx=t.source_pptx_uri is not None,
         registration_status=t.registration_status,
         registration_error=t.registration_error,
+        preview_url=_preview_url(t),
         created_at=t.created_at,
     )
 
