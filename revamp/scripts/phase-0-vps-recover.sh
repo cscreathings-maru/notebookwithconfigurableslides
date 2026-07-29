@@ -219,7 +219,7 @@ cat <<EOF
 
          build:
     -      context: ../presenton-custom
-    +      context: ./../presenton/source
+    +      context: ../presenton/source
 
   2. Review what landed:
          git -C "$REPO_ROOT" status --short
