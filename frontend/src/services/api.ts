@@ -224,6 +224,10 @@ export interface Generation {
   source_ids: string[];
   consistency_report: ConsistencyReport | null;
   artifacts: { pptx: boolean; pdf: boolean };
+  /** Same-origin link that opens this deck in the slide editor, composed by the
+   *  backend. `null` when there is nothing to open -- the engine has not produced a
+   *  presentation for this generation yet (T-1.2). */
+  editor_url: string | null;
   error: string | null;
   created_by: string | null;
   created_at: string;

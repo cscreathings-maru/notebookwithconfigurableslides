@@ -19,13 +19,11 @@ export function SlideEditorModal({
 }: Props) {
   if (!isOpen) return null;
 
-  // Since Presenton is now hosted on the same domain under /editor/, we can use relative paths or the current origin
-  const defaultBaseUrl = process.env.NEXT_PUBLIC_PRESENTON_UI_URL || ""; 
-  const resolvedUrl = editorUrl.startsWith("/presenton")
-    ? editorUrl.replace(/^\/presenton\/?/, `${defaultBaseUrl}/editor/`)
-    : editorUrl.startsWith("http")
-    ? editorUrl
-    : `${defaultBaseUrl}${editorUrl.startsWith("/") ? "" : "/"}${editorUrl}`;
+  // The URL arrives ready to use, composed by the backend as a same-origin path
+  // (T-1.2). The previous rewriting logic existed to compensate for
+  // NEXT_PUBLIC_PRESENTON_UI_URL, which was never declared as a build arg in
+  // frontend/Dockerfile and so was always `undefined` -- it rewrote nothing.
+  const resolvedUrl = editorUrl;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 animate-in fade-in duration-200">

@@ -63,6 +63,11 @@ class GenerationResponse(BaseModel):
     source_ids: list[Any]
     consistency_report: dict[str, Any] | None
     artifacts: ArtifactAvailability
+    # Same-origin link to open this deck in the slide editor, or None when there is
+    # nothing to open. Deliberately a URL, not the engine's presentation id: the client
+    # receives a capability it cannot forge meaning from, and changing the engine's URL
+    # shape stays a backend-only edit (T-1.2).
+    editor_url: str | None
     error: str | None
     created_by: uuid.UUID | None
     created_at: datetime

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import io
 import uuid
+from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Query, status
 from fastapi.responses import StreamingResponse
@@ -52,6 +53,10 @@ _PUBLIC_PARAM_KEYS = frozenset(
 )
 
 
+# Presenton is served same-origin under this prefix (T-1.1). Kept here so the URL
+# shape is defined in exactly one place.
+_EDITOR_BASE_PATH = "/editor"
+
 _ARTIFACT_MEDIA_TYPES = {
     "pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation",
     "pdf": "application/pdf",
@@ -60,6 +65,23 @@ _ARTIFACT_MEDIA_TYPES = {
 
 def _public_params(params: dict | None) -> dict:
     return {k: v for k, v in (params or {}).items() if k in _PUBLIC_PARAM_KEYS}
+
+
+def _editor_url(g: Generation) -> str | None:
+    """Same-origin link that opens this deck in Presenton, or None.
+
+    The route is `/presentation` with the id as a **query parameter** — verified from
+    `app-path-routes-manifest.json` in the published engine image, where
+    `/(presentation-generator)/presentation/page` maps to a static `/presentation` with
+    no dynamic segment. A path form like `/presentation/{id}` does not exist.
+
+    The engine id itself never reaches the client: `_PUBLIC_PARAM_KEYS` strips it from
+    `params`, and there is no field for it on the response. This composes the URL
+    server-side so the invariant holds while the button still works.
+    """
+    if not g.presenton_presentation_id:
+        return None
+    return f"{_EDITOR_BASE_PATH}/presentation?id={quote(str(g.presenton_presentation_id))}"
 
 
 def _to_response(g: Generation) -> GenerationResponse:
@@ -76,6 +98,7 @@ def _to_response(g: Generation) -> GenerationResponse:
         source_ids=g.source_ids or [],
         consistency_report=g.consistency_report,
         artifacts=ArtifactAvailability(pptx=bool(g.pptx_uri), pdf=bool(g.pdf_uri)),
+        editor_url=_editor_url(g),
         error=g.error,
         created_by=g.created_by,
         created_at=g.created_at,

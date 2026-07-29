@@ -61,7 +61,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const [editorOpen, setEditorOpen] = useState(false);
-  const [activeEditorGenId, setActiveEditorGenId] = useState<string | null>(null);
+  const [activeEditor, setActiveEditor] = useState<{ id: string; url: string } | null>(null);
 
 
   const loadDecks = useCallback(() => {
@@ -343,10 +343,13 @@ export function StudioPanel({ projectId }: { projectId: string }) {
                 
                 {g.status === "ready" && (
                   <div className="flex shrink-0 gap-1.5 ml-3 opacity-0 group-hover:opacity-100 transition-opacity">
+                    {/* Hidden when the backend has no editor URL: the engine never
+                        produced a presentation, so there is nothing to open (T-1.2). */}
+                    {g.editor_url && (
                     <button
                       type="button"
                       onClick={() => {
-                        setActiveEditorGenId(g.id);
+                        setActiveEditor({ id: g.id, url: g.editor_url! });
                         setEditorOpen(true);
                       }}
                       className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7 border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300"
@@ -354,6 +357,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
                     >
                       <span>🎨 Editor</span>
                     </button>
+                    )}
                     {g.artifacts.pptx && (
                       <button
                         type="button"
@@ -396,9 +400,10 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         isOpen={editorOpen}
         onClose={() => setEditorOpen(false)}
         title="🎨 Interactive Presentation Slide Editor"
-        subtitle={`Polishing deck generation (${activeEditorGenId?.slice(0, 8)}...) — move components and adjust font styling`}
-        // Since Presenton is hosted under /editor/, we can use relative paths
-        editorUrl={`/editor/presentation?id=${activeEditorGenId}`}
+        subtitle={`Polishing deck generation (${activeEditor?.id.slice(0, 8)}...) — move components and adjust font styling`}
+        // Composed by the backend from the ENGINE's presentation id. Building it here
+        // from Generation.id sent Presenton a Postgres UUID it had never seen (T-1.2).
+        editorUrl={activeEditor?.url}
       />
     </div>
   );

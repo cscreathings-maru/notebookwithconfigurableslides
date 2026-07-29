@@ -1,12 +1,11 @@
 /**
  * T-2.5: URL resolution in the editor launcher — the surface T-1.2 broke.
  *
- * These pin the *current* behaviour so the T-1.2 fix (which needs the vendored
- * Presenton source and is still blocked as TD-06) has a baseline to change against.
- * They already prove one half of T-1.2's diagnosis: `NEXT_PUBLIC_PRESENTON_UI_URL`
- * is never declared as a build arg in `frontend/Dockerfile`, so Next.js inlines it
- * as `undefined` and `defaultBaseUrl` is permanently "". The rewriting logic built
- * on it is dead code compensating for a value that never arrives.
+ * **Updated for T-1.2.** The modal no longer resolves anything: the backend composes
+ * the URL from the engine's presentation id and the component renders it verbatim.
+ * The old rewriting logic keyed off `NEXT_PUBLIC_PRESENTON_UI_URL`, which
+ * `frontend/Dockerfile` never declared as a build arg -- so it was always `undefined`
+ * and the rewriting was dead compensation for a value that never arrived.
  */
 
 import { render, screen } from "@testing-library/react";
@@ -67,20 +66,23 @@ describe("url resolution", () => {
     expect(launchHref()).toBe("/editor/presentation/abc");
   });
 
-  it("prefixes a bare path with a slash", () => {
-    // Arrange / Act
-    renderModal({ editorUrl: "editor/presentation/abc" });
+  it("uses the backend URL verbatim", () => {
+    // Arrange -- T-1.2: the backend composes this from the ENGINE's presentation id,
+    // so any client-side rewriting would corrupt a URL that is already correct.
+    renderModal({ editorUrl: "/editor/presentation?id=abc-123" });
 
     // Assert
-    expect(launchHref()).toBe("/editor/presentation/abc");
+    expect(launchHref()).toBe("/editor/presentation?id=abc-123");
   });
 
-  it("rewrites the legacy /presenton prefix to /editor", () => {
-    // Arrange -- left over from the retired subdomain model
+  it("does not rewrite a legacy /presenton path", () => {
+    // Arrange -- the old rewriting logic keyed off NEXT_PUBLIC_PRESENTON_UI_URL, which
+    // frontend/Dockerfile never declared as a build arg, so it was always undefined and
+    // rewrote nothing. Deleted in T-1.2 rather than left as dead compensation.
     renderModal({ editorUrl: "/presenton/presentation/abc" });
 
     // Assert
-    expect(launchHref()).toBe("/editor/presentation/abc");
+    expect(launchHref()).toBe("/presenton/presentation/abc");
   });
 
   it("shows the resolved url to the user", () => {
