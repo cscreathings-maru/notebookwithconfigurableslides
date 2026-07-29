@@ -7,7 +7,7 @@ that proves it is still open and the check that will prove it closed.
 **Status legend:** `BLOCKED` — cannot proceed in any environment reachable today ·
 `OPEN` — actionable now · `DEFERRED` — actionable, scheduled for a named later phase.
 
-Last reconciled: **2026-07-29** (end of Phase 1).
+Last reconciled: **2026-07-29** (end of Phase 2).
 
 ---
 
@@ -66,13 +66,11 @@ context — so in practice they unblock with `TD-01`.
 
 | ID | Finding | Sev | From | Target | Closed when |
 |---|---|---|---|---|---|
-| **TD-12** | 4 × `F821 Undefined name OPEN_NOTEBOOK_API_VERSION` in `tests/contract/test_open_notebook_contract.py` — an undefined name inside a **contract test**, so those assertions cannot be evaluating what they claim | 🟠 | Phase 1 F3 | **Phase 2** | `ruff check` clean; the contract test asserts a defined constant |
-| **TD-13** | 6 × `F401` unused imports across `src/` and `tests/` | ⚪ | Phase 1 F3 | **Phase 2** | `ruff check src tests` reports 0 |
-| **TD-14** | `workers/tasks.py` at **29% coverage** — lowest module in the tree, and where the T-1.4 enqueue race lived | 🟠 | Phase 1 F6 | **Phase 2 (T-2.5 adjacent)** | Coverage ≥ 60% on `workers/` |
+| **TD-14** | `workers/tasks.py` at **29% coverage** — lowest module in the tree, and where the T-1.4 enqueue race lived | 🟠 | Phase 1 F6 | **Phase 3** | Coverage ≥ 60% on `workers/` |
 | **TD-15** | Migration `0006` backfills existing templates to `registered`. Templates that really fell back now *claim* to be healthy | 🟡 | Phase 1 F7 | **Phase 4** | A one-off re-registration pass, or an operator note |
-| **TD-16** | `.env.lite.example` still configures `PRESENTON_DOMAIN` / `NEXT_PUBLIC_PRESENTON_UI_URL` for the retired subdomain model, contradicting the locked same-origin `/editor` decision | 🟡 | Phase 0 F4 | **Phase 2 (T-2.7)** | Dead variables removed |
-| **TD-17** | `README.md:79` cites the archived `NOTEAI_TEST_REPORT.md` for "26 criteria, 100% pass" — a claim the archive itself now carries a banner disowning | 🟡 | Phase 0 F3 | **Phase 2 (T-2.7)** | No doc cites the archived report as evidence |
-| **TD-18** | Alembic revision ids must stay ≤ 32 chars (`alembic_version.version_num` is `varchar(32)`). Caught only by running against Postgres; SQLite would have passed it | ⚪ | Phase 1 F1 | **Phase 2 (T-2.7)** | Convention documented in `docs/ARCHITECTURE.md` |
+| **TD-21** | Phase 2's gate G6 requires demonstrating the frontend tier "would have caught T-1.2" by reverting that fix. **T-1.2 was never fixed**, so there is nothing to revert — the gate assumes a Phase 1 that passed | 🟡 | Phase 2 F4 | **with TD-06** | The guard is demonstrated once T-1.2 lands |
+| **TD-22** | Every boundary the orchestrator delegates across is untested at the engine tier. T-2.1's hole existed because `test_tenant_isolation.py` covers only Postgres; the pattern generalises | 🟠 | Phase 2 F6 | **Phase 4** | Engine contract tests run against real containers |
+| **TD-23** | Option B (post-filtering) still sends every query to a shared index that computes similarity across all tenants' embeddings before results are discarded. Nothing leaves the boundary, but the index is not unshared | 🟠 | Phase 2 §8 | **Phase 4** | A namespace or instance per tenant, if `LITE_MODE=false` is to hold multi-tenant data |
 
 ---
 
@@ -80,8 +78,7 @@ context — so in practice they unblock with `TD-01`.
 
 | ID | Item | Evidence | Closed when |
 |---|---|---|---|
-| **TD-19** | Phase prompts have shipped defects that would have produced false passes: a Phase 0 gate command that could not fail; a Phase 1 change list missing two call sites and the `window.open` auth problem | Phase 0 D1/F1–F2, Phase 1 F2/F4 | Gate commands are executed and their output inspected before a phase is signed off — not assumed |
-| **TD-20** | Migrations are only exercised against SQLite in the test suite; `TD-18` proves that is insufficient | Phase 1 D3 | Migration round-trip against Postgres runs in CI |
+| **TD-19** | Phase prompts have shipped defects that would have produced false passes: a Phase 0 gate command that could not fail; a Phase 1 change list missing two call sites and the `window.open` auth problem; a Phase 2 evidence list missing a fourth unscoped search call site | Phase 0 D1/F1–F2, Phase 1 F2/F4, Phase 2 F1 | Gate commands are executed and their output inspected before a phase is signed off — not assumed |
 
 ---
 
@@ -98,4 +95,11 @@ When a phase closes, update this file in the same commit as its report:
 
 ## 6. Closed
 
-_None yet._
+| ID | Item | Closed by | Note |
+|---|---|---|---|
+| **TD-12** | Undefined `OPEN_NOTEBOOK_API_VERSION` in a module-level-skipped contract test | `36d229c` (T-2.1) | Rewritten against the **verified real** `/api` surface; 7 tests, no skip. The suite now has 0 skipped. |
+| **TD-13** | 6 × `F401` unused imports | `36d229c` (T-2.1) | `ruff check src tests` → `All checks passed!` |
+| **TD-16** | Dead `PRESENTON_DOMAIN` / `NEXT_PUBLIC_PRESENTON_UI_URL` | `4688cc0` (T-2.7) | Removed from `.env.lite.example` and the compose build args |
+| **TD-17** | README citing the archived report as quality evidence | `52272a2` (T-2.6) | Testing section rewritten; the citation is now a correction, not a claim |
+| **TD-18** | Alembic revision id length convention undocumented | `4688cc0` (T-2.7) | Recorded in `docs/ARCHITECTURE.md` §8 |
+| **TD-20** | Migrations only exercised against SQLite | `4688cc0` (T-2.7) | CI `migrations` job round-trips against real Postgres 16 |
