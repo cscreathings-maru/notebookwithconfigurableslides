@@ -7,6 +7,30 @@ rather than offering a command that looks like it proves something.
 
 ---
 
+## Read this first: where each command runs
+
+Running the wrong tier in the wrong place fails for reasons that have nothing to do with
+the code.
+
+| Tier | Run it on | Why not elsewhere |
+|---|---|---|
+| **A — test suites** | **Dev machine or CI** | The VPS has no Python venv and no `node_modules`. `backend/.dockerignore` excludes `tests/`, so the deployed image does not contain the suite either — it cannot be run there at all. |
+| **B — build & migrations** | Dev machine, or VPS with care | Needs Docker. On the VPS it touches real volumes; read each command first. |
+| **C — live stack** | **VPS** | Needs a running deployment. |
+| **Recovery** | **VPS** | The Presenton source only exists there. |
+
+Unit tests on a production host are the wrong place regardless. **Tier A is a dev/CI
+concern.** The VPS's job is the recovery step and live-stack checks.
+
+Each block below assumes you start at the repository root. Blocks `cd` into
+subdirectories — return to root between them, or use a subshell:
+
+```bash
+( cd backend && ./.venv/bin/python -m pytest tests/ -q )
+```
+
+---
+
 ## Where the three phases stand
 
 | Phase | Gate | Reality |
@@ -23,9 +47,10 @@ unmet, and the reports say exactly which. Tier A below is all green.
 
 ---
 
-## Tier A — no Docker, no stack, works anywhere
+## Tier A — test suites (dev machine or CI, **not** the VPS)
 
-This is the bulk of Phase 1 and 2. Run from the repo root.
+This is the bulk of Phase 1 and 2. Needs a Python venv and `node_modules` — see the
+table above for why this tier cannot run on the production host.
 
 ### A1. Backend suite and coverage
 
@@ -148,25 +173,78 @@ regex script for.
 
 ---
 
-## Unblocking: the recovery step
+## Unblocking: the recovery step (VPS)
 
-On the VPS. The branch must be checked out first — this work is **not on `main`**:
+This work is on `revamp/phase-1`, **not `main`**.
 
-```bash
-cd /var/www/notebookfinal && git fetch origin && git checkout revamp/phase-1 && git pull
+### Step 0 — capture the VPS's uncommitted config first
+
+A plain `checkout` will abort if the working tree has local edits:
+
+```
+error: Your local changes to the following files would be overwritten by checkout:
+        deploy/docker-compose.lite.yml
 ```
 
-Then:
+**That abort is protecting you.** Those edits are live production configuration that
+exists nowhere else — the same class of problem as the un-vendored engine. Capture them
+before doing anything:
 
 ```bash
-bash revamp/scripts/phase-0-vps-recover.sh
+cd /var/www/notebookfinal
+git status --short
+git diff > ~/vps-drift-$(date +%F).patch && wc -l ~/vps-drift-$(date +%F).patch
+git diff
 ```
 
-The script backs up before touching anything, stages but never commits, and hard-stops
-if it finds a secret in the vendored tree. **It has never been executed** — it is
-syntax-checked only (`bash -n`). Read it before running it.
+Read that diff. It is the only record of how production differs from `main`.
 
-Once `git ls-files | grep -c '^presenton/'` returns non-zero, Tier C opens up.
+### Step 1 — preserve, then switch
+
+`revamp/phase-1` **also modifies `deploy/docker-compose.lite.yml`** (healthchecks and
+`depends_on: service_healthy`, from T-2.4). So this is a real conflict needing a decision,
+not a blind overwrite. Keep the VPS edits recoverable:
+
+```bash
+cd /var/www/notebookfinal
+git stash push -m "vps-drift-$(date +%F)" -- deploy/docker-compose.lite.yml
+git checkout revamp/phase-1 && git pull
+```
+
+`git stash list` will show it; `git stash show -p stash@{0}` replays it. Combined with the
+`.patch` file from step 0, the config is recoverable two ways.
+
+> **Do not `git checkout --force`.** It discards the production config with no copy.
+
+### Step 2 — run the recovery script
+
+```bash
+cd /var/www/notebookfinal && bash revamp/scripts/phase-0-vps-recover.sh
+```
+
+It backs up before touching anything, stages but never commits, and hard-stops if it
+finds a secret in the vendored tree. **It has never been executed** — syntax-checked only
+(`bash -n`). Read it before running it.
+
+### Step 3 — confirm the blocker is gone
+
+```bash
+cd /var/www/notebookfinal && git ls-files | grep -c '^presenton/'
+```
+
+Non-zero means `TD-01` is closed and Tier C opens up.
+
+### Step 4 — reconcile the compose drift
+
+The stashed VPS config and the branch's healthcheck changes both need to survive. Merge
+them deliberately rather than picking one:
+
+```bash
+cd /var/www/notebookfinal && git stash show -p stash@{0}
+```
+
+Apply what is still needed by hand, then commit it — so the next person does not find
+undocumented drift again.
 
 ---
 
