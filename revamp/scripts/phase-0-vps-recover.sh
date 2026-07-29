@@ -187,7 +187,10 @@ if command -v rsync >/dev/null 2>&1; then
   # next.config.mjs, so the stock `.next/` exclude misses the compiled output
   # entirely. Without it the vendored tree carries ~168MB of build artifacts.
   # `readme_assets` and `electron` are not used by the Docker build either.
-  rsync -a --delete \
+  # --delete-excluded, not just --delete: plain --delete PROTECTS excluded files that
+  # already exist in the destination, so a tree copied before these excludes existed
+  # would keep its build output forever. This makes a re-run self-healing.
+  rsync -a --delete --delete-excluded \
     --exclude='.git/' --exclude='node_modules/' \
     --exclude='.next/' --exclude='.next-build/' --exclude='dist/' --exclude='build/' \
     --exclude='app_data/' --exclude='__pycache__/' --exclude='.venv/' \
