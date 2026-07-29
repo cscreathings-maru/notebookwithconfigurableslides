@@ -183,12 +183,26 @@ ok "→ presenton/PROVENANCE.txt (paste this into the Phase 0 report)"
 
 step "  Copying source (excluding build output, deps, runtime state, secrets)"
 if command -v rsync >/dev/null 2>&1; then
+  # `.next-build` matters: Presenton sets `distDir: ".next-build"` in
+  # next.config.mjs, so the stock `.next/` exclude misses the compiled output
+  # entirely. Without it the vendored tree carries ~168MB of build artifacts.
+  # `readme_assets` and `electron` are not used by the Docker build either.
   rsync -a --delete \
-    --exclude='.git/' --exclude='node_modules/' --exclude='.next/' \
+    --exclude='.git/' --exclude='node_modules/' \
+    --exclude='.next/' --exclude='.next-build/' --exclude='dist/' --exclude='build/' \
     --exclude='app_data/' --exclude='__pycache__/' --exclude='.venv/' \
     --exclude='*.db' --exclude='.env' --exclude='.env.*' \
+    --exclude='readme_assets/' --exclude='electron/' \
     "$SOURCE_DIR"/ "$VENDOR_DIR"/source/
-  ok "rsync → presenton/source/"
+  ok "rsync → presenton/source/ ($(du -sh "$VENDOR_DIR/source" 2>/dev/null | cut -f1))"
+
+  # A vendored tree in the hundreds of MB means an exclude was missed. Say so
+  # rather than letting it reach a commit, where removing it needs history surgery.
+  SRC_KB="$(du -sk "$VENDOR_DIR/source" 2>/dev/null | cut -f1)"
+  if [[ -n "$SRC_KB" && "$SRC_KB" -gt 102400 ]]; then
+    warn "vendored tree is $((SRC_KB / 1024))MB — larger than expected for source only."
+    warn "  Inspect before committing:  du -sh $VENDOR_DIR/source/* | sort -rh | head"
+  fi
 else
   die "rsync not found: apt-get install -y rsync"
 fi
