@@ -8,7 +8,7 @@
 |---|---|
 | Phase | `2 — Architecture Stabilisation` |
 | Date started | `2026-07-29` |
-| Date completed | `2026-07-29` (with three gates PARTIAL — see §2) |
+| Date completed | `2026-07-29`; **amended same day** after a local stack became runnable (§10) |
 | Executed by | Claude Opus 5 (local workstation session) |
 | Commit range | `bbfc6ce..4688cc0` (8 commits) |
 | Branch | `revamp/phase-1` (continued; Phase 2 work is `36d229c..4688cc0`) |
@@ -25,26 +25,30 @@
 | G2 | Missing/unfilterable ref → empty grounding, never unscoped | **PASS** | §4.1 |
 | G3 | Freeform generations in `/usage`; quota applies to both paths | **PASS** | §4.1 |
 | G4 | `LlmClient` extends `EngineClient`; diagnosable; coverage ≥ 70% | **PASS** | §4.1 — 100% |
-| G5 | `/api/readyz` reachable through Traefik, per-dependency; all healthchecks | **PARTIAL** | §5 M3 |
+| G5 | `/api/readyz` reachable through Traefik, per-dependency; all healthchecks | **PASS** | §5 M8 |
 | G6 | Frontend tier in CI; thresholds met; would have caught T-1.2 | **PARTIAL** | §4.2, §7 F4 |
-| G7 | Regex script deleted; 5 Playwright journeys pass against a live stack | **PARTIAL** | §4.3 |
+| G7 | Regex script deleted; 5 Playwright journeys pass against a live stack | **PARTIAL** | §4.3, §5 M9 |
 | G8 | No false documentation claim; `docs/ARCHITECTURE.md` exists | **PASS** | §5 M4 |
 | G9 | Backend coverage ≥ 87%; no previously passing test regressed | **PASS** | §4.1 — 89% |
 
-**Overall gate: `FAIL`** — 6 of 9 `PASS`, 3 `PARTIAL`, 0 `FAIL`.
+**Overall gate: `FAIL`** — **7 of 9 `PASS`**, 2 `PARTIAL`, 0 `FAIL`.
+
+> **Amended 2026-07-29 (post-recovery).** G5 moved `PARTIAL` → `PASS` and G7 gained real
+> evidence once a local stack became runnable. See §5 M8–M9; the addendum in §10 records
+> what changed and why it became possible.
 
 > **G1 and G2 — the phase's stated reason for existing — both PASS.** The cross-project
 > retrieval hole is closed and covered by tests verified red against the old code.
-> The three PARTIALs share one cause: **nothing has been executed against a live stack**,
-> because the stack cannot start without Presenton.
+> The two remaining PARTIALs no longer share a cause: G6 waits on T-1.2 landing, while
+> G7 waits only on the two engines that still need to be running.
 
-### Why the three are PARTIAL
+### Why the two are PARTIAL
 
 | Gate | Done | Not done |
 |---|---|---|
-| G5 | Endpoints mounted under `/api`, per-dependency probes, 6 compose healthchecks, `depends_on: service_healthy`, 9 tests | Never curled **through Traefik** |
+| G5 | ~~Never curled through Traefik~~ — **now verified end to end (§5 M8)** | *resolved* |
 | G6 | 66 tests, thresholds enforced, CI workflow added | *"Would have caught T-1.2"* cannot be demonstrated — T-1.2 is still unfixed (TD-06), so there is no fix to revert |
-| G7 | Regex script deleted; 13 specs across 5 journeys compile and enumerate | **Never run.** No stack to run against |
+| G7 | `01-shell` **passes 4/4 against a live stack**; `04`/`05` correctly **skip** | `02`/`03` still unexercised — need Open Notebook and Presenton running |
 
 ---
 
@@ -55,7 +59,7 @@
 | `T-2.1` | Scope RAG retrieval to the project | 🔴 | **DONE** | `test_engine_isolation.py` (8) | `36d229c` |
 | `T-2.2` | Unify quota + metering across both paths | 🟠 | **DONE** | `test_generation_preflight.py` (5) | `9f79045` |
 | `T-2.3` | `LlmClient` under the resilience layer | 🟠 | **DONE** | `test_llm_client.py` (21) | `436e5db` |
-| `T-2.4` | Restore health monitoring | 🟠 | **DONE (unwalked)** | `test_health.py` (9) | `2668bf4` |
+| `T-2.4` | Restore health monitoring | 🟠 | **DONE** | `test_health.py` (9) + §5 M8 | `2668bf4` |
 | `T-2.5` | Frontend test tier | 🟡 | **DONE** | 66 Vitest tests | `b58c225` |
 | `T-2.6` | Retire the fake verification suite | 🟡 | **PARTIAL** | 13 specs written, none run | `52272a2` |
 | `T-2.7` | Reconcile documentation | 🟡 | **DONE** | §5 M4 | `4688cc0` |
@@ -107,8 +111,9 @@ replace it. `04-editor` and `05-branding` **skip with a stated reason** when `/e
 unreachable rather than passing. Reporting green on a missing feature is precisely what
 the deleted script did; a skip is honest, a vacuous pass is not.
 
-**None of the 13 has run.** They compile and enumerate (`npx playwright test --list`).
-That is the whole of the claim.
+~~**None of the 13 has run.**~~ **Amended:** `01-shell` now passes **4/4** against a live
+stack, and `04`/`05` **skip** rather than pass — the design claim, validated (§5 M9).
+`02`/`03` remain unexercised: they need Open Notebook and Presenton running.
 
 ### Deviations
 
@@ -250,9 +255,11 @@ exist. This is the honest state of G7.
 | M5 | Compose parses after env cleanup | valid | `docker compose config` → OK | **PASS** |
 | M6 | CI workflow is valid YAML | parses | 4 jobs: backend, migrations, frontend, build | **PASS** |
 | M7 | Two projects, disjoint sources, no cross-contamination | — | asserted **by test** (`test_guide_is_grounded_only_in_own_project_sources`), **not by hand** — needs a stack | **PARTIAL** |
+| M8 | **Health through Traefik (G5)** | per-dependency JSON at `/api/readyz` | `GET /api/healthz` → **200**; `GET /api/readyz` → **200** `{"status":"degraded", ...}` with `postgres/redis/minio: ok`, `open_notebook/presenton: down`. `/` → **307** (frontend). `GET /readyz` at root → **404**, proving the pre-T-2.4 mount was unreachable behind the proxy. Compose reports `healthy` for frontend, orchestrator, postgres, redis, minio. | **PASS** |
+| M9 | **Smoke journeys against a live stack (G7)** | real execution, no vacuous passes | `01-shell` **4/4 passed** (5.4s). `04-editor` + `05-branding` → **5 skipped**, with the stated reason, because `/editor` is unreachable. `02`/`03` not attempted — engines not running. | **PARTIAL** |
 
-**No screenshots.** Every manual step in the prompt (§Manual verification 1–4) needs a
-running stack.
+**No screenshots.** The prompt's manual steps 1–4 need journeys `02`/`03`, which need the
+two engines running. Steps that only needed the orchestrator tier are now covered by M8.
 
 ---
 
@@ -375,3 +382,62 @@ is how the original defects got here.
 
 **The recommended next action is not Phase 3. It is `TD-01`** — one command on the VPS,
 which unblocks nine tracked items including the product's headline feature.
+
+---
+
+## 10. Addendum — 2026-07-29, post-recovery
+
+This report was signed with three gates `PARTIAL`, all attributed to one cause:
+*"the stack cannot start, because the slide engine is not in the repository."*
+
+**That premise turned out to be wrong**, and the correction is worth recording because it
+was the programme's central assumption for three phases.
+
+### What the Phase 0 recovery actually found
+
+| Assumed since the assessment | Reality |
+|---|---|
+| `presenton-custom` is absent from the VPS | **Present**, untracked, inside the repo at `presenton-custom/` |
+| An unversioned fork, hand-mutated, provenance unrecoverable | A **clean git checkout** of `github.com/presenton/presenton` at `0.9.3-beta` |
+| Undocumented divergence of unknown extent | **Zero commits** ahead of upstream (`git log origin/main..HEAD` → empty) |
+| Mutations spread through the source | **One uncommitted line**: `assetPrefix: '/editor'` in `servers/nextjs/next.config.mjs` |
+
+The recovery script itself reported the source missing — it resolved the compose build
+context `../presenton-custom` from the repo root rather than from `deploy/`, where the
+compose file lives. Fixed in `e6e3adf`.
+
+### What that made possible
+
+With divergence reduced to one config line, the published upstream image reproduces the
+engine faithfully enough to run everything except `/editor` itself.
+`deploy/docker-compose.local.yml` swaps the absent build context for
+`ghcr.io/presenton/presenton:latest`, and the stack starts.
+
+### What was then verified, not inferred
+
+- **G5 → PASS.** `/api/readyz` answers through Traefik with per-dependency status; `/` still
+  reaches the frontend; **`/readyz` at the root returns 404**, which is the executed proof
+  that the pre-T-2.4 mount was unreachable behind the proxy. Five services report `healthy`
+  under the compose healthchecks added by T-2.4.
+- **G7 → real evidence.** `01-shell` passes 4/4 against the live stack. `04-editor` and
+  `05-branding` **skip** with their stated reason rather than passing — the T-2.6 design
+  claim, validated. The deleted regex script would have reported green on both.
+- **Migrations** `0001`–`0006` applied against real Postgres via `init`, which exited `0`.
+
+### What is still open, and why
+
+`02-project-lifecycle` and `03-generation` need Open Notebook and Presenton running.
+G6 needs T-1.2 to land before *"would have caught it"* can be demonstrated at all.
+
+`/editor` remains broken, and the reason is now precise rather than suspected:
+`assetPrefix` prefixes **assets** but does not change **routing**. Only `basePath` does,
+and it must be baked at build time — so it cannot be patched into a prebuilt image. The
+VPS's removal of Traefik's `stripprefix` was half of T-1.1, applied by hand and never
+committed.
+
+### Correction to the sign-off
+
+The original §9 recommended `TD-01` over Phase 3. That still holds, but the reasoning has
+changed: the risk was never that the engine was lost. It was that a one-line change and a
+runtime config file lived in exactly one place, with no history and no backup — which is
+the same shape of problem, and was worth the same urgency.

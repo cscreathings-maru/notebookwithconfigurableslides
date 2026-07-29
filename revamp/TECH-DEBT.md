@@ -7,34 +7,47 @@ that proves it is still open and the check that will prove it closed.
 **Status legend:** `BLOCKED` — cannot proceed in any environment reachable today ·
 `OPEN` — actionable now · `DEFERRED` — actionable, scheduled for a named later phase.
 
-Last reconciled: **2026-07-29** (end of Phase 2).
+Last reconciled: **2026-07-29** (post Phase 0 recovery on the VPS).
 
 ---
 
-## 1. Blocked on the Presenton source
+## 1. The Presenton engine delta
 
-Every item here has one root cause: **the slide engine exists only as mutable container
-state on the production VPS.** It has never been in version control, there is no backup,
-and it is not reachable from the development workstation.
+**Substantially revised 2026-07-29 after the recovery script ran.** The original framing —
+*"an unversioned fork, hand-mutated, provenance unrecoverable"* — was wrong on every count:
 
-Closing `TD-01` closes or unblocks all nine.
+| Assumed | Found |
+|---|---|
+| Source absent from the VPS | **Present**, untracked, at `presenton-custom/` |
+| Unversioned fork | Clean git checkout of `github.com/presenton/presenton` @ `0.9.3-beta` |
+| Unknown divergence | **Zero commits** ahead of upstream |
+| Mutations throughout the source | **One uncommitted line**: `assetPrefix: '/editor'` |
+
+The real risk was never that the engine was lost. It was that **one line and one runtime
+config file lived in exactly one place**, with no history and no backup — the same shape of
+problem, deserving the same urgency.
+
+Backups now exist (see TD-03). Closing `TD-01` — committing that one-line delta with its
+upstream provenance — still unblocks the rest.
 
 | ID | Item | From | Status | Closed when |
 |---|---|---|---|---|
-| **TD-01** | Vendor the Presenton source into the repo | Phase 0 T-0.1 | `BLOCKED` | `git ls-files \| grep -c '^presenton/'` > 0 |
-| **TD-02** | Capture mutated runtime state as committed config | Phase 0 T-0.2 | `BLOCKED` | `/app_data/userConfig.json` equivalent lives in the repo, not the container |
-| **TD-03** | Off-host backup of `presenton_data` + Postgres, checksums recorded | Phase 0 T-0.3 | `BLOCKED` | Archives exist off-host with recorded checksums |
+| **TD-01** | Commit the engine delta with provenance. **Not a 205MB vendor** — the tree is unmodified upstream plus one line; prefer a real fork or submodule | Phase 0 T-0.1 | `OPEN` | The `assetPrefix`/`basePath` change is committed somewhere with history |
+| **TD-02** | Capture mutated runtime state as committed config | Phase 0 T-0.2 | `DONE (uncommitted)` | Captured and redacted to `presenton/config/userConfig.example.json`; needs committing |
+| **TD-03** | Off-host backup of `presenton_data` + Postgres, checksums recorded | Phase 0 T-0.3 | `PARTIAL` | Archives **taken with checksums** (pg 8K, presenton 17M, minio 57M) but **still on the host they exist to survive** — the `scp` has not run |
 | **TD-04** | Prove reproducibility from a clean clone | Phase 0 T-0.5 | `PARTIAL` | `docker compose build` succeeds for **all 5** services (currently 4/5 — `presenton` context absent) |
 | **TD-05** | Serve Presenton at `/editor` via build-time `basePath` | Phase 1 T-1.1 | `BLOCKED` | `/editor` returns 200, zero asset 404s in devtools |
 | **TD-06** | Fix the editor deep-link identifier (`editor_url` on `GenerationResponse`) | Phase 1 T-1.2 | `BLOCKED` | "🎨 Editor" opens the correct deck |
 | **TD-07** | **Wire `brand_tokens` through to the renderer** | Phase 1 T-1.3 | `BLOCKED` | A `#FF00FF` template produces a visibly magenta deck |
 | **TD-08** | Walk the 9-step manual journey with screenshots | Phase 1 G8 | `BLOCKED` | All 9 steps recorded in a report |
-| **TD-09** | Smoke journeys `04-editor` and `05-branding` | Phase 2 T-2.6 | `BLOCKED` | Both specs pass against a live stack |
+| **TD-09** | Smoke journeys `04-editor` and `05-branding` | Phase 2 T-2.6 | `BLOCKED` | Both pass. **Verified they correctly SKIP** against a live stack rather than falsely passing (Phase 2 §5 M9) |
 
-> **TD-07 is the programme's highest-value blocked item.** It is the product's headline
-> feature — the repository is named *notebookwithconfigurableslides* and the slides are not
+> **TD-07 is the programme's highest-value item.** It is the product's headline feature —
+> the repository is named *notebookwithconfigurableslides* and the slides are not
 > configurable. The data is modelled and stored correctly; only the wiring is missing.
-> It is cheap to fix and cannot be started without the source.
+> **No longer blocked:** the source is on the VPS and the theming contract is known —
+> `POST /api/v1/ppt/themes` taking `{name, description, company_name, logo, logo_url, data}`
+> (read from `api/v1/ppt/endpoints/theme.py` in the published image).
 
 ### Recovery path
 
@@ -50,8 +63,12 @@ bash revamp/scripts/phase-0-vps-recover.sh
 ```
 
 Backs up before touching anything, stages but never commits, and hard-stops if it finds a
-secret in the vendored tree. **Never executed** — syntax-checked only (`bash -n`). Read it
-before running it.
+secret in the vendored tree.
+
+**Executed 2026-07-29.** Backups taken with checksums, `userConfig.json` captured and
+redacted, source copied. Two defects it surfaced, both since fixed: the build context was
+resolved from the wrong base (`e6e3adf`), and `.next-build` escaped the rsync excludes,
+producing a 205MB tree of which 168MB was compiled output (`a535bc0`).
 
 ---
 
@@ -65,8 +82,10 @@ real path. Distinct from `BLOCKED`: nothing prevents this except a running stack
 | **TD-10** | Deck PPTX/PDF download in a real browser | Phase 1 T-1.5 | `OPEN` | A browser click saves an openable file |
 | **TD-11** | Registration-fallback badge renders in the templates UI | Phase 1 T-1.6 | `OPEN` | Badge observed on a `fallback` template |
 
-Both depend on a stack that currently cannot start, because `presenton` has no build
-context — so in practice they unblock with `TD-01`.
+**A local stack now starts.** `deploy/docker-compose.local.yml` substitutes the published
+upstream image for the absent build context, so the orchestrator tier is exercisable —
+that is how Phase 2's G5 was closed. These two still need a **browser** rather than curl,
+and TD-11 additionally needs a template whose registration actually fell back.
 
 ---
 

@@ -33,3 +33,8 @@ presenton/**/.env.*
 
 # Vitest coverage output
 frontend/coverage/
+
+# Playwright run artifacts
+frontend/test-results/
+frontend/playwright-report/
+frontend/blob-report/

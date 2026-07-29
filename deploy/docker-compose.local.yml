@@ -1,0 +1,45 @@
+# Local development override — NOT the deployed configuration.
+#
+# The production `presenton` service builds from `../presenton-custom`, a directory
+# that exists only on the VPS. This override swaps it for the published upstream
+# image so the stack can start on a development machine.
+#
+# WHAT THIS IS FAITHFUL TO
+#   The VPS checkout has ZERO commits ahead of upstream (`git log origin/main..HEAD`
+#   is empty). Its only divergence is one uncommitted line in
+#   `servers/nextjs/next.config.mjs`:
+#
+#       assetPrefix: '/editor',
+#
+# WHAT THIS IS NOT
+#   The image below does NOT carry that line — upstream ships `assetPrefix: ''` and
+#   `basePath: ''` (verified by reading `.next-build/required-server-files.json`
+#   inside the published image).
+#
+#   So `/editor` behaves DIFFERENTLY here than on the VPS:
+#     - here:   assets emit at `/_next/...`, and `/editor` 404s
+#     - on VPS: assets emit at `/editor/_next/...`, and `/editor` still 404s,
+#               because assetPrefix does not change routing — only `basePath` does
+#
+#   Both 404. Neither is correct. T-1.1 fixes it by baking `basePath: '/editor'` at
+#   build time, which cannot be patched into a prebuilt image.
+#
+#   ==> Do not use this file to validate T-1.1, T-1.2, T-1.3, or gate G3.
+#       Smoke journeys 04-editor and 05-branding will SKIP, which is correct.
+#
+# USAGE
+#   cd deploy
+#   cp .env.lite.example .env.lite      # never on a host that has a real one
+#   docker compose -f docker-compose.lite.yml -f docker-compose.local.yml \
+#     --env-file .env.lite up -d
+#
+# Pin the digest below once a specific upstream build is chosen; `latest` is a
+# moving target and this file is meant to be reproducible.
+
+services:
+  presenton:
+    # `!reset` drops the inherited `build:` entirely. Without it compose would build
+    # the absent ../presenton-custom context and merely tag the result with the image
+    # name below — which fails on a machine that does not have the source.
+    build: !reset null
+    image: ghcr.io/presenton/presenton:latest
