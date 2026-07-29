@@ -20,9 +20,15 @@ __pycache__/
 frontend/tsconfig.tsbuildinfo
 
 # Presenton runtime state — never commit. Contains API keys and generated decks.
-presenton/app_data/
+# Globbed, not anchored: the source vendors to presenton/source/, so an anchored
+# `presenton/app_data/` would not match `presenton/source/app_data/`. The recovery
+# script's rsync already excludes these; this is the second line of defence for
+# anyone who copies the tree by hand.
+presenton/**/app_data/
 presenton/**/node_modules/
 presenton/**/.next/
+presenton/**/.env
+presenton/**/.env.*
 *.db
 
 # Vitest coverage output
