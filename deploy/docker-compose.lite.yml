@@ -190,6 +190,18 @@ services:
       # Embeddings need their own provider — OpenRouter has none, so use OpenAI:
       OPENAI_API_KEY: ${OPENAI_API_KEY}
       EMBEDDING_MODEL: ${EMBEDDING_MODEL}
+      # Document extraction is INSTALLED AT CONTAINER STARTUP, only when enabled.
+      # docker-entrypoint.sh guards it with `is_true "$$OPEN_NOTEBOOK_ENABLE_DOCLING"`,
+      # so leaving it unset means content-core[docling] is never installed and the
+      # engine has NO extractor for .docx/.pptx/.xlsx — those sources fail with
+      # "Could not extract content ... unsupported format" and started_at: null,
+      # while .md and .txt still work because plain text needs no extractor.
+      #
+      # First start after enabling this pulls a large ML stack (several hundred MB to
+      # a few GB) and takes minutes. It persists on the notebook_data volume.
+      OPEN_NOTEBOOK_ENABLE_DOCLING: ${OPEN_NOTEBOOK_ENABLE_DOCLING:-true}
+      # Only needed to ingest web URLs; also pulls a ~150MB Chromium. Off by default.
+      OPEN_NOTEBOOK_ENABLE_CRAWL4AI: ${OPEN_NOTEBOOK_ENABLE_CRAWL4AI:-false}
     volumes: ["notebook_data:/app/data"]
     depends_on: [surrealdb]
     networks: [appnet]
