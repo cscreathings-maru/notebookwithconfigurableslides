@@ -168,6 +168,22 @@ export default function TemplatesPage() {
     }
   };
 
+  // Registration happens at creation, so a template registered through a broken
+  // request could never repair itself. This retries from the stored PPTX.
+  const reregister = async (id: string) => {
+    setError(null);
+    try {
+      const updated = await api.reregisterTemplate(id);
+      if (updated.registration_status !== "registered") {
+        // Surface the engine's own reason rather than a generic failure.
+        setError(updated.registration_error ?? t("templates.reregisterFailed"));
+      }
+      load();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("templates.reregisterFailed"));
+    }
+  };
+
   return (
     <section aria-labelledby="templates-heading" className="flex flex-col gap-8 animate-fade-in">
       <header className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
@@ -470,6 +486,16 @@ export default function TemplatesPage() {
                         >
                           <span>🎨 Test in Editor</span>
                         </button>
+                        )}
+                        {tpl.registration_status !== "registered" && tpl.has_pptx && (
+                          <button
+                            type="button"
+                            onClick={() => reregister(tpl.id)}
+                            className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 border-amber-400 text-amber-700 hover:bg-amber-50 dark:text-amber-300"
+                            title={tpl.registration_error ?? "Retry registering this template with the slide engine"}
+                          >
+                            <span>↻ {t("templates.reregister")}</span>
+                          </button>
                         )}
                         {tpl.status === "draft" && (
                           <button

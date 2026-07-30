@@ -111,6 +111,24 @@ def approve_template(
     return _to_response(service.approve(template_id, actor_user_id=principal.user_id))
 
 
+@router.post("/{template_id}/reregister", response_model=TemplateResponse)
+async def reregister_template(
+    template_id: uuid.UUID,
+    principal: Principal = Depends(require_admin),
+    service: TemplateService = Depends(get_template_service),
+) -> TemplateResponse:
+    """Retry engine registration from the template's already-stored PPTX.
+
+    Repairs templates whose registration failed -- notably every template created
+    before T-1.3, when the request omitted two fields the engine declares required.
+    The response carries the new `registration_status`, so a still-failing attempt is
+    legible rather than silent.
+    """
+    return _to_response(
+        await service.reregister(template_id, actor_user_id=principal.user_id)
+    )
+
+
 @router.post("/extract-tokens", response_model=ExtractedTokensResponse)
 async def extract_template_tokens(
     file: UploadFile = File(...),

@@ -126,6 +126,54 @@ class TemplateService:
             logger.info("template_created", extra={"template_id": str(logical_id)})
         return template
 
+    async def reregister(
+        self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None
+    ) -> Template:
+        """Re-run engine registration for an existing template, from its stored PPTX.
+
+        Registration previously happened only at creation, so a template registered
+        through a broken request could never repair itself -- the operator's only route
+        was re-uploading the same deck under a new name. The PPTX is already in object
+        storage, so nothing needs re-uploading from the browser.
+
+        Deliberately does NOT create a new version: the template's content is unchanged.
+        What changes is the engine ref, which was never user-visible and was wrong.
+        """
+        latest = self.repo.latest(logical_id)
+        if latest is None:
+            raise NotFoundError("Template not found.")
+        if not latest.source_pptx_uri:
+            raise ValidationError(
+                "This template has no stored PPTX. The slide engine derives colours, "
+                "fonts and layouts from an uploaded deck, so there is nothing to "
+                "register — create a template with a .pptx instead.",
+                code="no_source_pptx",
+            )
+
+        pptx_bytes = self.object_store.get_bytes(key=latest.source_pptx_uri)
+        namespace = _tenant_namespace(self.repo.db, self.repo.tenant_id)
+        registration = await self.presenton.register_template(
+            name=f"{namespace}__{latest.name}",
+            pptx_bytes=pptx_bytes,
+            pptx_filename=latest.source_pptx_uri.rsplit("/", 1)[-1],
+        )
+
+        latest.presenton_template_ref = registration.ref
+        latest.registration_status = registration.status
+        latest.registration_error = registration.error
+        self.repo.db.add(latest)
+        self.repo.db.flush()
+        self._audit("template.reregistered", latest, actor_user_id)
+        logger.info(
+            "template_reregistered",
+            extra={
+                "template_id": str(logical_id),
+                "registration_status": registration.status.value,
+                "error": registration.error,
+            },
+        )
+        return latest
+
     def approve(self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None) -> Template:
         latest = self.repo.latest(logical_id)
         if latest is None:

@@ -152,6 +152,8 @@ export const en = {
   "templates.colVersion": "Version",
   "templates.colPptx": "PPTX",
   "templates.colStatus": "Status",
+  "templates.reregister": "Re-register",
+  "templates.reregisterFailed": "Re-registration failed.",
   "templates.registrationFallback": "Stock theme",
   "templates.registrationFailed": "Not registered",
   "templates.imported": "imported",

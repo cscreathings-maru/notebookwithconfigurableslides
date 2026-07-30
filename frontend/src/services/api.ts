@@ -431,6 +431,10 @@ export const api = {
   },
   approveTemplate: (id: string) =>
     request<Template>(`/templates/${id}/approve`, { method: "POST" }),
+  /** Retry engine registration from the template's already-stored PPTX. Repairs
+   *  templates whose registration failed; no re-upload needed. */
+  reregisterTemplate: (id: string) =>
+    request<Template>(`/templates/${id}/reregister`, { method: "POST" }),
 
   // --- Profiles ---
   listProfiles: () => request<Profile[]>("/profiles"),
