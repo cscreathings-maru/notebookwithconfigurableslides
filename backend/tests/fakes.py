@@ -10,6 +10,7 @@ from __future__ import annotations
 from collections.abc import Collection
 from typing import Any
 
+from src.engines.open_notebook import SourceProgress
 from src.engines.presenton import TemplateRegistration
 from src.models import RegistrationStatus
 
@@ -45,7 +46,11 @@ class FakeOpenNotebook:
         analysis_ref: str = "analysis_fake",
         add_source_error: Exception | None = None,
         corpus: dict[str, str] | None = None,
+        status_detail: str | None = "Unsupported file type: could not extract text.",
     ) -> None:
+        # What the engine says when a source fails. Real instances always populate
+        # `message`, so a fake that returns None would be less strict than reality.
+        self.status_detail = status_detail
         self.notebook_id = notebook_id
         self.source_id = source_id
         # Each get_source_status call pops the next status; defaults to ready.
@@ -71,11 +76,12 @@ class FakeOpenNotebook:
             raise self.add_source_error
         return self.source_id
 
-    async def get_source_status(self, *, source_id: str) -> str:
+    async def get_source_status(self, *, source_id: str) -> SourceProgress:
+        """Mirrors the real client: state plus the engine's own explanation."""
         self.calls.append("get_source_status")
-        if len(self._statuses) > 1:
-            return self._statuses.pop(0)
-        return self._statuses[0]
+        state = self._statuses.pop(0) if len(self._statuses) > 1 else self._statuses[0]
+        detail = self.status_detail if state == "failed" else None
+        return SourceProgress(state=state, detail=detail)
 
     async def run_transformation(
         self, *, source_id: str, provider_config: dict[str, Any]

@@ -96,9 +96,9 @@ async def test_source_status_maps_engine_states() -> None:
         ("failed", "failed"),
         ("cancelled", "failed"),
     ]:
-        handler, seen = _recorder(200, {"status": raw})
-        status = await _client(handler).get_source_status(source_id="source:src_456")
-        assert status == expected, raw
+        handler, seen = _recorder(200, {"status": raw, "message": f"command {raw}"})
+        progress = await _client(handler).get_source_status(source_id="source:src_456")
+        assert progress.state == expected, raw
         assert seen["path"] == "/api/sources/source:src_456/status"
 
 
@@ -112,10 +112,10 @@ async def test_ambiguous_status_falls_back_to_the_embedded_flag() -> None:
         return httpx.Response(200, json={"id": "source:src_456", "embedded": True})
 
     # Act
-    status = await _client(handler).get_source_status(source_id="source:src_456")
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
 
     # Assert
-    assert status == "ready"
+    assert progress.state == "ready"
 
 
 async def test_not_embedded_and_unknown_status_stays_processing() -> None:
@@ -126,10 +126,10 @@ async def test_not_embedded_and_unknown_status_stays_processing() -> None:
         return httpx.Response(200, json={"id": "source:src_456", "embedded": False})
 
     # Act
-    status = await _client(handler).get_source_status(source_id="source:src_456")
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
 
     # Assert
-    assert status == "processing"
+    assert progress.state == "processing"
 
 
 async def test_search_pinned_call_and_response_shape() -> None:
@@ -172,3 +172,53 @@ async def test_search_availability_failure_degrades_to_no_grounding() -> None:
 
     # Assert
     assert results == []
+
+
+async def test_a_failed_status_carries_the_engines_own_reason() -> None:
+    """`SourceStatusResponse.message` is required, and it is the only thing that tells a
+    user *why* a source failed. Discarding it left "Analysis failed for this source." —
+    a string this codebase wrote, carrying nothing the engine had said."""
+    # Arrange
+    handler, _seen = _recorder(
+        200,
+        {
+            "status": "failed",
+            "message": "Unsupported file type: could not extract text",
+            "processing_info": {"error": "content-core found no extractor for .docx"},
+        },
+    )
+
+    # Act
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
+
+    # Assert
+    assert progress.state == "failed"
+    assert progress.detail is not None
+    assert "Unsupported file type" in progress.detail
+    assert "content-core" in progress.detail, "processing_info detail must survive too"
+
+
+async def test_a_status_with_no_message_is_not_fabricated() -> None:
+    """Absent detail stays absent; the caller decides what to say, not this client."""
+    # Arrange
+    handler, _seen = _recorder(200, {"status": "failed"})
+
+    # Act
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
+
+    # Assert
+    assert progress.state == "failed"
+    assert progress.detail is None
+
+
+async def test_the_engine_detail_is_length_capped() -> None:
+    """Source.error is String(1024); an unbounded engine payload must not overflow it."""
+    # Arrange
+    handler, _seen = _recorder(200, {"status": "failed", "message": "x" * 5000})
+
+    # Act
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
+
+    # Assert
+    assert progress.detail is not None
+    assert len(progress.detail) <= 1024

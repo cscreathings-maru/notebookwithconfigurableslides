@@ -14,6 +14,7 @@ shared index, and isolation is enforced on this side of the boundary.
 from __future__ import annotations
 
 from collections.abc import Collection
+from dataclasses import dataclass
 from typing import Any
 
 from ..core.config import get_settings
@@ -30,6 +31,48 @@ _GROUNDING_LIMIT = 10
 # Post-filtering discards hits belonging to other projects, so ask the engine for more
 # than we need or recall collapses on a busy shared instance. The engine caps limit at 1000.
 _GROUNDING_OVER_FETCH = 6
+
+# Engine explanations are stored on Source.error (String(1024)); keep well inside it.
+_DETAIL_MAX_CHARS = 800
+
+
+@dataclass(frozen=True)
+class SourceProgress:
+    """A source's normalized state plus the engine's own explanation of it.
+
+    `detail` is what the engine said, verbatim. Carrying it separately from `state`
+    keeps the orchestrator's three-state model intact while preserving the one piece
+    of information a user actually needs when something fails.
+    """
+
+    state: str  # "ready" | "failed" | "processing"
+    detail: str | None
+
+
+def _status_detail(body: dict[str, Any]) -> str | None:
+    """The engine's explanation, from `message` plus any `processing_info`.
+
+    Both fields are part of `SourceStatusResponse`. `message` is always populated —
+    even for legacy sources, where it says so.
+    """
+    parts: list[str] = []
+    message = (body.get("message") or "").strip()
+    if message:
+        parts.append(message)
+
+    info = body.get("processing_info")
+    if isinstance(info, dict):
+        # Surface the fields most likely to name a cause; keep it bounded so a large
+        # payload cannot flood the column or the log.
+        for key in ("error", "error_message", "detail", "reason", "exception"):
+            value = str(info.get(key) or "").strip()
+            if value and value not in parts:
+                parts.append(value)
+    elif info:
+        parts.append(str(info).strip())
+
+    joined = " | ".join(p for p in parts if p)
+    return joined[:_DETAIL_MAX_CHARS] or None
 
 
 def _result_source_ref(item: dict[str, Any]) -> str | None:
@@ -105,25 +148,40 @@ class OpenNotebookClient(EngineClient):
         self._ensure_ok(resp, "add_source")
         return self._field(resp.json(), "id")
 
-    async def get_source_status(self, *, source_id: str) -> str:
-        """Poll a source; returns normalized queued/processing/ready/failed."""
+    async def get_source_status(self, *, source_id: str) -> SourceProgress:
+        """Poll a source; returns the normalized state **and the engine's own reason**.
+
+        `SourceStatusResponse` declares `message` as required and `processing_info` as
+        optional detail. Both were previously discarded, so a source that failed inside
+        the engine surfaced to the user as "Analysis failed for this source." — a string
+        this codebase wrote, carrying nothing the engine had said.
+
+        That is the same concealment as template registration returning `"default"`
+        (T-1.6) and the LLM collapsing every error into one message (T-2.3): a real,
+        specific cause replaced by a plausible generic one.
+        """
         resp = await self.request("GET", f"{_API}/sources/{source_id}/status")
         self._ensure_ok(resp, "get_source_status")
         body = resp.json()
         raw = (body.get("status") or "").strip().lower()
+        detail = _status_detail(body)
         logger.info(
             "on_source_status",
-            extra={"source_id": source_id, "raw_status": raw or "(none)"},
+            extra={
+                "source_id": source_id,
+                "raw_status": raw or "(none)",
+                "engine_message": detail or "(none)",
+            },
         )
         if raw in _FAILED_STATES:
-            return "failed"
+            return SourceProgress(state="failed", detail=detail)
         if raw in _READY_STATES:
-            return "ready"
+            return SourceProgress(state="ready", detail=detail)
         # Command status is ambiguous/empty — the source's embed flag is the
         # authoritative "done" signal for our purposes.
         if await self._is_embedded(source_id):
-            return "ready"
-        return "processing"
+            return SourceProgress(state="ready", detail=detail)
+        return SourceProgress(state="processing", detail=detail)
 
     async def _is_embedded(self, source_id: str) -> bool:
         """True once Open Notebook has embedded the source (best-effort signal)."""

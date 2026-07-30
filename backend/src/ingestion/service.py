@@ -189,11 +189,21 @@ async def ingest_source(
         db.add(source)
         db.flush()
 
-    status = await _poll_until_terminal(on_client, source.on_source_id)
+    progress = await _poll_until_terminal(on_client, source.on_source_id)
 
-    if status == _FAILED:
-        _mark_failed(db, source, "Analysis failed for this source.")
-        logger.info("ingest_source_failed", extra={"source_id": str(source_id)})
+    if progress.state == _FAILED:
+        # Record the ENGINE's reason. A generic string here is what made a failed
+        # source undiagnosable: the user saw "failed" and had nothing to act on,
+        # while the engine had already said why.
+        _mark_failed(
+            db,
+            source,
+            progress.detail or "The analysis engine reported a failure with no detail.",
+        )
+        logger.warning(
+            "ingest_source_failed",
+            extra={"source_id": str(source_id), "engine_detail": progress.detail},
+        )
         return
 
     # Ready -> derive analysis and finalize.
@@ -207,15 +217,22 @@ async def ingest_source(
     logger.info("ingest_source_ready", extra={"source_id": str(source_id)})
 
 
-async def _poll_until_terminal(on_client, on_source_id: str) -> str:
+async def _poll_until_terminal(on_client, on_source_id: str):
+    """Poll until the engine reaches a terminal state, carrying its explanation along."""
     settings = get_settings()
+    last_detail: str | None = None
     for _ in range(settings.ingest_poll_max_attempts):
-        status = await on_client.get_source_status(source_id=on_source_id)
-        if status in (_READY, _FAILED):
-            return status
+        progress = await on_client.get_source_status(source_id=on_source_id)
+        last_detail = progress.detail or last_detail
+        if progress.state in (_READY, _FAILED):
+            return progress
         await asyncio.sleep(settings.ingest_poll_interval_seconds)
-    # Timed out: transient — let the job retry rather than corrupting state.
-    raise EngineError("Open Notebook analysis timed out.")
+    # Timed out: transient — let the job retry rather than corrupting state. Include the
+    # last thing the engine said, so a timeout is not a dead end either.
+    raise EngineError(
+        "Open Notebook analysis timed out."
+        + (f" Last engine status: {last_detail}" if last_detail else "")
+    )
 
 
 def _mark_failed(db: Session, source: Source, message: str) -> None:
