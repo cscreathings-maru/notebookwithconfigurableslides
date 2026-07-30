@@ -7,7 +7,7 @@ that proves it is still open and the check that will prove it closed.
 **Status legend:** `BLOCKED` — cannot proceed in any environment reachable today ·
 `OPEN` — actionable now · `DEFERRED` — actionable, scheduled for a named later phase.
 
-Last reconciled: **2026-07-29** (post Phase 0 recovery on the VPS).
+Last reconciled: **2026-07-29** (post Phase 0 recovery; editor round-trip deferred to backlog).
 
 ---
 
@@ -98,6 +98,9 @@ and TD-11 additionally needs a template whose registration actually fell back.
 | **TD-21** | Phase 2's gate G6 requires demonstrating the frontend tier "would have caught T-1.2" by reverting that fix. **T-1.2 was never fixed**, so there is nothing to revert — the gate assumes a Phase 1 that passed | 🟡 | Phase 2 F4 | **with TD-06** | The guard is demonstrated once T-1.2 lands |
 | **TD-22** | Every boundary the orchestrator delegates across is untested at the engine tier. T-2.1's hole existed because `test_tenant_isolation.py` covers only Postgres; the pattern generalises | 🟠 | Phase 2 F6 | **Phase 4** | Engine contract tests run against real containers |
 | **TD-23** | Option B (post-filtering) still sends every query to a shared index that computes similarity across all tenants' embeddings before results are discarded. Nothing leaves the boundary, but the index is not unshared | 🟠 | Phase 2 §8 | **Phase 4** | A namespace or instance per tenant, if `LITE_MODE=false` is to hold multi-tenant data |
+| **TD-24** | **Editing round-trip: an edited deck is not downloadable.** Deck bytes are produced once at generation and stored in MinIO. Editing in the Presenton studio updates the engine's own copy, so the editor shows the edit and NoteAI's download returns the pre-edit file — silently. Full analysis and phased plan in [`PLAN-EDITOR-ROUNDTRIP.md`](PLAN-EDITOR-ROUNDTRIP.md) | 🟠 | 2026-07-29 | **backlog** | Edit a deck in the studio, download from NoteAI, and the file contains the edit |
+| **TD-25** | Engine-side state (every template layout and deck edit) lives in one SQLite file in the `presenton_data` volume. One manual backup exists; no schedule, and no restore has ever been tested | 🟠 | 2026-07-29 | **backlog** | Scheduled off-host backup **and** a verified restore |
+| **TD-26** | A NoteAI `Template` version is immutable once used by a `Generation`, but an engine-side layout edit changes rendering without bumping it — so a pinned "v1" can render differently over time. Unclear whether editing a template retro-changes decks already generated from it | 🟡 | 2026-07-29 | **backlog** | The rule is decided and documented; behaviour matches it |
 
 ---
 
