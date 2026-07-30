@@ -198,7 +198,13 @@ services:
       # while .md and .txt still work because plain text needs no extractor.
       #
       # First start after enabling this pulls a large ML stack (several hundred MB to
-      # a few GB) and takes minutes. It persists on the notebook_data volume.
+      # a few GB) and takes minutes.
+      #
+      # It does NOT persist across container recreation: the install lands in
+      # /app/.venv, while the only volume mounts notebook_data at /app/data. So
+      # `restart` keeps it (same filesystem) but `--force-recreate`, an image change
+      # or a compose edit to this service re-downloads the whole stack. The
+      # entrypoint's `has_module docling` check is what makes a plain restart cheap.
       OPEN_NOTEBOOK_ENABLE_DOCLING: ${OPEN_NOTEBOOK_ENABLE_DOCLING:-true}
       # Only needed to ingest web URLs; also pulls a ~150MB Chromium. Off by default.
       OPEN_NOTEBOOK_ENABLE_CRAWL4AI: ${OPEN_NOTEBOOK_ENABLE_CRAWL4AI:-false}
