@@ -30,7 +30,12 @@ from ..models import (
     Tenant,
 )
 from ..storage.object_store import ObjectStore
-from .kinds import kind_for_filename
+from .kinds import (
+    content_type_for_filename,
+    is_supported_upload,
+    kind_for_filename,
+    supported_extensions,
+)
 from .repository import ProjectRepository, SourceRepository
 
 logger = get_logger("orchestrator.ingestion")
@@ -112,14 +117,28 @@ class SourceService:
                 status=SourceStatus.queued,
             )
         elif filename is not None and content is not None:
+            # Reject up front rather than enqueuing a job that fails in the engine.
+            # A user learns immediately instead of watching "queued" indefinitely.
+            if not is_supported_upload(filename):
+                raise ValidationError(
+                    f"The analysis engine cannot extract text from this file type. "
+                    f"Supported: {', '.join(supported_extensions())}.",
+                    code="unsupported_source_type",
+                )
+
             key = self.object_store.tenant_key(
                 tenant_id=self.source_repo.tenant_id.hex,
                 project_id=project.id.hex,
                 source_id=source_id.hex,
                 filename=filename,
             )
+            # The REAL content type, not octet-stream. The engine fetches this object by
+            # presigned URL and routes on the Content-Type the store serves; a generic
+            # octet-stream left it unable to pick an extractor for binary formats.
             self.object_store.put_bytes(
-                key=key, data=content, content_type="application/octet-stream"
+                key=key,
+                data=content,
+                content_type=content_type_for_filename(filename),
             )
             source = Source(
                 id=source_id,
