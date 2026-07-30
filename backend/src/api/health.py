@@ -67,6 +67,15 @@ async def _check_redis() -> dict[str, str]:
 
 async def _check_http(url: str) -> dict[str, str]:
     """Any HTTP answer means the dependency is listening — including a 4xx."""
+    # A URL without a scheme raises httpx.UnsupportedProtocol, which reads as though the
+    # dependency is down when in fact the *configuration* is wrong. That happened on the
+    # production deployment: Presenton was healthy and reported `down`. Name the real
+    # cause rather than making an operator debug a service that is fine.
+    if not url.startswith(("http://", "https://")):
+        return {
+            "status": "misconfigured",
+            "detail": f"URL has no http(s):// scheme: {url!r}",
+        }
     try:
         async with httpx.AsyncClient(timeout=_PROBE_TIMEOUT_SECONDS) as client:
             resp = await client.get(url)
@@ -100,6 +109,8 @@ async def readyz(response: Response) -> dict[str, Any]:
     """Readiness: per-dependency status, with Postgres alone able to fail the check."""
     checks = await _dependencies()
 
+    # `misconfigured` counts as not-ok: a probe that cannot be issued tells us nothing
+    # about the dependency, and treating it as healthy would hide the config error.
     if checks[_CRITICAL]["status"] != "ok":
         overall = "unready"
         response.status_code = 503

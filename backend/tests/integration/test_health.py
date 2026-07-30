@@ -48,7 +48,7 @@ def test_readiness_reports_every_dependency_separately(client, path) -> None:
     # Assert
     assert set(body["dependencies"]) == EXPECTED_DEPENDENCIES
     for name, check in body["dependencies"].items():
-        assert check["status"] in {"ok", "degraded", "down"}, name
+        assert check["status"] in {"ok", "degraded", "down", "misconfigured"}, name
 
 
 def test_reachable_database_keeps_the_service_ready(client) -> None:
