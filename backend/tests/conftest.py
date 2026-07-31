@@ -61,6 +61,11 @@ def _schema() -> Iterator[None]:
 @pytest.fixture(autouse=True)
 def _clean_tables() -> Iterator[None]:
     yield
+    # The fake object store is shared process-wide (it models one bucket), so it has
+    # to be emptied with the tables or objects leak between tests.
+    from tests.fakes import FakeObjectStore
+
+    FakeObjectStore.reset()
     # Delete children before parents to satisfy FK constraints. Optional models
     # (added by later slices) are cleaned only once they exist.
     import src.models as models

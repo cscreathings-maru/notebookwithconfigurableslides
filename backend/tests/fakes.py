@@ -16,10 +16,23 @@ from src.models import RegistrationStatus
 
 
 class FakeObjectStore:
-    """In-memory object store with the same surface as the MinIO store."""
+    """In-memory object store with the same surface as the MinIO store.
+
+    Backed by ONE shared dict, because the real store is one bucket: `get_object_store`
+    is `@lru_cache`d, so every collaborator in a process talks to the same MinIO. Tests
+    routinely wire one instance into the API (which stores the upload) and hand a second
+    to `ingest_source` (which now reads it back); per-instance dicts made those two
+    look like different buckets and lost the object. `reset()` clears it between tests.
+    """
+
+    _objects: dict[str, bytes] = {}
 
     def __init__(self) -> None:
-        self.objects: dict[str, bytes] = {}
+        self.objects = type(self)._objects
+
+    @classmethod
+    def reset(cls) -> None:
+        cls._objects.clear()
 
     def tenant_key(self, *, tenant_id: str, project_id: str, source_id: str, filename: str) -> str:
         return f"{tenant_id}/{project_id}/sources/{source_id}/{filename}"
@@ -63,15 +76,27 @@ class FakeOpenNotebook:
         self.corpus = dict(corpus or {})
         self.searched_scopes: list[set[str]] = []
         self.calls: list[str] = []
+        # What actually crossed the boundary, so a test can assert files were UPLOADED
+        # (filename, content_type, byte count) rather than linked.
+        self.uploaded: list[tuple[str, str, int]] = []
+        self.linked: list[str] = []
 
     async def create_notebook(self, *, name: str, namespace: str) -> str:
         self.calls.append("create_notebook")
         return self.notebook_id
 
-    async def add_source(
-        self, *, notebook_id: str, uri: str, provider_config: dict[str, Any]
+    async def add_source_file(
+        self, *, notebook_id: str, filename: str, content: bytes, content_type: str
     ) -> str:
         self.calls.append("add_source")
+        self.uploaded.append((filename, content_type, len(content)))
+        if self.add_source_error is not None:
+            raise self.add_source_error
+        return self.source_id
+
+    async def add_source_link(self, *, notebook_id: str, url: str) -> str:
+        self.calls.append("add_source")
+        self.linked.append(url)
         if self.add_source_error is not None:
             raise self.add_source_error
         return self.source_id

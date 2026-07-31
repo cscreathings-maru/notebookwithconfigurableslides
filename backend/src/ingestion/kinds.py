@@ -1,11 +1,14 @@
 """Map an uploaded filename to a SourceKind and a MIME type.
 
-The MIME type matters as much as the kind. Sources reach Open Notebook as a presigned
-object-store URL, so the engine's only clue about the format is the `Content-Type` header
-the store serves. Uploading everything as `application/octet-stream` left the engine's
-extractor nothing to route on: a text file could still be sniffed from its bytes, but a
-binary OFFICE file was rejected with "Could not extract content ... unsupported format"
-and `started_at: null` — processing never began.
+The MIME type matters as much as the kind: it is stored on the object AND sent as the
+multipart part's content type when the file is uploaded to Open Notebook, so the engine
+can route to a document handler.
+
+Sources used to reach the engine as a presigned object-store URL typed as "link". That
+was the real cause of "Could not extract content ... unsupported format" with
+`started_at: null` — the link path is a web-page extractor and never routes binaries,
+whatever Content-Type the store serves. Files are uploaded directly now
+(`OpenNotebookClient.add_source_file`).
 """
 
 from __future__ import annotations
@@ -63,10 +66,10 @@ def content_type_for_filename(filename: str) -> str:
 def is_supported_upload(filename: str) -> bool:
     """Whether the analysis engine can be expected to extract this file.
 
-    The engine rejects unextractable *uploads* with 415 up front — a guard it added
-    specifically to avoid a background job that fails and then burns the retry budget
-    behind a generic error. We hand it a URL instead, so that guard never runs for us
-    and the equivalent check has to live here.
+    The engine rejects unextractable *uploads* with 415 up front. Now that files are
+    uploaded rather than linked, that guard does run for us — but this check stays: it
+    fails at request time, before an object is stored and a job enqueued, so the user
+    learns immediately instead of watching a source sit in "queued".
     """
     return _extension(filename) in _EXT_MAP
 

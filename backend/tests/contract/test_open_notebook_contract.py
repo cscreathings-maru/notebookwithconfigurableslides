@@ -10,7 +10,8 @@ fails loudly in CI instead of silently in production (constitution principle IV)
 | Call | Route | Source |
 |---|---|---|
 | create_notebook | `POST /api/notebooks` | `routers/notebooks.py:132` |
-| add_source | `POST /api/sources/json` | `routers/sources.py:708` |
+| add_source_file | `POST /api/sources` (multipart) | `routers/sources.py` |
+| add_source_link | `POST /api/sources/json` | `routers/sources.py:708` |
 | get_source_status | `GET /api/sources/{id}/status` | `routers/sources.py:843` |
 | _is_embedded | `GET /api/sources/{id}` | `routers/sources.py:755` |
 | search | `POST /api/search` | `routers/search.py:21` |
@@ -67,15 +68,66 @@ async def test_create_notebook_pinned_call() -> None:
     assert "acme" in seen["body"]["description"]
 
 
-async def test_add_source_pinned_call() -> None:
+def _raw_recorder(status: int, payload: dict):
+    """Like `_recorder`, but keeps the body as bytes — multipart is not JSON."""
+    seen: dict = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["content_type"] = request.headers.get("content-type", "")
+        seen["raw"] = request.content
+        return httpx.Response(status, json=payload)
+
+    return handler, seen
+
+
+async def test_add_source_file_uploads_the_bytes() -> None:
+    """Files must be UPLOADED, not linked.
+
+    `type: "link"` selects the engine's web-page extractor. A .docx behind a presigned
+    object-store URL failed in under a second with `started_at: null` and "Could not
+    extract content from this source" — the binary never reached a document handler.
+    This test pins the upload surface so that regression cannot return silently.
+    """
+    # Arrange
+    handler, seen = _raw_recorder(201, {"id": "source:src_456"})
+
+    # Act
+    source_id = await _client(handler).add_source_file(
+        notebook_id="notebook:nb_123",
+        filename="Panduan.docx",
+        content=b"PK\x03\x04 fake docx bytes",
+        content_type=(
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+        ),
+    )
+
+    # Assert -- request shape
+    assert source_id == "source:src_456"
+    assert seen["method"] == "POST"
+    assert seen["path"] == "/api/sources"
+    assert seen["content_type"].startswith("multipart/form-data")
+
+    body = seen["raw"]
+    # Every field arrives as form data: booleans are strings, `notebooks` a JSON array.
+    assert b'name="type"' in body and b"upload" in body
+    assert b'"notebook:nb_123"' in body, "notebooks must be a JSON array string"
+    assert b'name="embed"' in body and b"true" in body
+    # The file itself crossed the boundary -- this is the whole point of the fix.
+    assert b"fake docx bytes" in body
+    assert b"Panduan.docx" in body
+
+
+async def test_add_source_link_pinned_call() -> None:
+    """Real web URLs keep the JSON path -- unchanged behaviour for user-supplied links."""
     # Arrange
     handler, seen = _recorder(201, {"id": "source:src_456"})
 
     # Act
-    source_id = await _client(handler).add_source(
+    source_id = await _client(handler).add_source_link(
         notebook_id="notebook:nb_123",
-        uri="https://objectstore.test/tenant/doc.pdf",
-        provider_config={"provider": "deepseek"},
+        url="https://example.test/article",
     )
 
     # Assert
@@ -84,7 +136,7 @@ async def test_add_source_pinned_call() -> None:
     assert seen["path"] == "/api/sources/json"
     assert seen["body"]["notebooks"] == ["notebook:nb_123"]
     assert seen["body"]["type"] == "link"
-    assert seen["body"]["url"] == "https://objectstore.test/tenant/doc.pdf"
+    assert seen["body"]["url"] == "https://example.test/article"
     assert seen["body"]["embed"] is True
 
 

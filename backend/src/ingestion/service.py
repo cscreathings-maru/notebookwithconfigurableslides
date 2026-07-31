@@ -192,19 +192,26 @@ async def ingest_source(
     db.add(source)
     db.flush()
 
-    uri = (
-        source.original_uri
-        if source.kind is SourceKind.url
-        else object_store.presigned_get(key=source.original_uri)
-    )
-
     # Resumable: only add the source to the engine if it isn't there yet.
+    #
+    # Files are UPLOADED, not linked. A presigned object-store URL sent as a "link"
+    # hits the engine's web-page extractor, which rejects binaries before processing
+    # starts; it also expires (short TTL), so the engine's own retry could never
+    # recover a source. Uploading the bytes removes both problems.
     if not source.on_source_id:
-        source.on_source_id = await on_client.add_source(
-            notebook_id=project.on_notebook_id,
-            uri=uri,
-            provider_config=provider_config,
-        )
+        if source.kind is SourceKind.url:
+            source.on_source_id = await on_client.add_source_link(
+                notebook_id=project.on_notebook_id,
+                url=source.original_uri,
+            )
+        else:
+            filename = source.original_uri.rsplit("/", 1)[-1]
+            source.on_source_id = await on_client.add_source_file(
+                notebook_id=project.on_notebook_id,
+                filename=filename,
+                content=object_store.get_bytes(key=source.original_uri),
+                content_type=content_type_for_filename(filename),
+            )
         db.add(source)
         db.flush()
 

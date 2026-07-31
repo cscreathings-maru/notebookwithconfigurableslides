@@ -95,6 +95,13 @@ async def test_upload_to_ready(client, seed: Fixtures, fake_on: FakeOpenNotebook
 
     await _run_ingest(source["id"], seed.tenant_a, fake_on)
 
+    # The file is UPLOADED to the engine, never handed over as a link. A presigned
+    # object-store URL sent as `type: "link"` hits the engine's web-page extractor,
+    # which rejects binaries before processing starts -- every source failed with
+    # `started_at: null`, nothing was ever embedded, and chat had no grounding.
+    assert fake_on.linked == [], "a stored file must never be sent as a link"
+    assert fake_on.uploaded == [("doc.pdf", "application/pdf", len(b"%PDF-1.4 fake"))]
+
     detail = client.get(f"/api/v1/sources/{source['id']}", headers=auth(seed.author_a_sub))
     assert detail.status_code == 200
     assert detail.json()["status"] == "ready"

@@ -7,12 +7,21 @@ pipeline only needs create-notebook, add-source and status polling. Grounding fo
 the outline comes from search (best-effort — never fatal). The transformation step
 is intentionally a no-op: the outline builder never consumes analysis_ref.
 
+**Files are uploaded, not linked.** `type: "link"` selects the engine's web-page
+extractor; it is for articles and HTML pages. Handing it a presigned object-store
+URL for a .docx/.pptx/.pdf failed within a second with `started_at: null` and
+"Could not extract content from this source" — the binary never reached a document
+handler. Uploads go through the multipart `POST /api/sources` with `type: "upload"`
+instead, which also removes the engine's dependency on reaching the object store
+and the presign-expiry race that made every retry unrecoverable.
+
 **Search is not scoped by the engine.** See `search()` — the instance is a single
 shared index, and isolation is enforced on this side of the boundary.
 """
 
 from __future__ import annotations
 
+import json
 from collections.abc import Collection
 from dataclasses import dataclass
 from typing import Any
@@ -122,17 +131,42 @@ class OpenNotebookClient(EngineClient):
         self._ensure_ok(resp, "create_notebook")
         return self._field(resp.json(), "id")
 
-    async def add_source(
+    async def add_source_file(
         self,
         *,
         notebook_id: str,
-        uri: str,
-        provider_config: dict[str, Any],
+        filename: str,
+        content: bytes,
+        content_type: str,
     ) -> str:
-        """Add a fetchable source (public URL or presigned object URL) and embed it.
+        """Upload file bytes and embed them; returns on_source_id.
 
-        `provider_config` is unused: Open Notebook embeds with its own configured
-        model. `uri` is always something Open Notebook can GET, so type is "link".
+        The multipart form is the engine's own upload surface: `notebooks` is a JSON
+        array *string* and the booleans are the strings "true"/"false", because every
+        field arrives as form data. Sending the file itself is what lets the engine
+        pick a document handler — the link path never could, whatever Content-Type
+        the object store served (see module docstring).
+        """
+        resp = await self.request(
+            "POST",
+            f"{_API}/sources",
+            data={
+                "type": "upload",
+                "notebooks": json.dumps([notebook_id]),
+                "title": filename,
+                "embed": "true",
+                "async_processing": "true",
+            },
+            files={"file": (filename, content, content_type)},
+        )
+        self._ensure_ok(resp, "add_source_file")
+        return self._field(resp.json(), "id")
+
+    async def add_source_link(self, *, notebook_id: str, url: str) -> str:
+        """Add a real web URL (article/page) and embed it; returns on_source_id.
+
+        Only for user-supplied web links. Never for object-store URLs — see
+        `add_source_file`.
         """
         resp = await self.request(
             "POST",
@@ -140,12 +174,12 @@ class OpenNotebookClient(EngineClient):
             json={
                 "notebooks": [notebook_id],
                 "type": "link",
-                "url": uri,
+                "url": url,
                 "embed": True,
                 "async_processing": True,
             },
         )
-        self._ensure_ok(resp, "add_source")
+        self._ensure_ok(resp, "add_source_link")
         return self._field(resp.json(), "id")
 
     async def get_source_status(self, *, source_id: str) -> SourceProgress:
