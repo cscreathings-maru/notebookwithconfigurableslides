@@ -84,6 +84,32 @@ def _status_detail(body: dict[str, Any]) -> str | None:
     return joined[:_DETAIL_MAX_CHARS] or None
 
 
+def _result_text(item: dict[str, Any]) -> str:
+    """The snippet text of one search hit.
+
+    `fn::vector_search` returns the matched chunks under **`matches`** — a list of
+    strings — not a scalar `content`/`text` field. Reading only the scalar names
+    dropped every hit silently: the engine answered with real results, this mapper
+    kept none of them, and chat produced "I don't have enough information" with empty
+    citations. That is indistinguishable from an empty index, which is exactly what
+    made it expensive to find. The scalar names are kept as a fallback so a future
+    engine version that returns one still works.
+    """
+    matches = item.get("matches")
+    if isinstance(matches, list):
+        joined = "\n".join(str(m).strip() for m in matches if str(m).strip())
+        if joined:
+            return joined
+    elif isinstance(matches, str) and matches.strip():
+        return matches.strip()
+
+    for key in ("content", "text", "full_text", "chunk"):
+        value = item.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 def _result_source_ref(item: dict[str, Any]) -> str | None:
     """The engine source id a search hit came from, or None if unresolvable.
 
@@ -290,13 +316,7 @@ class OpenNotebookClient(EngineClient):
         for item in results:
             if not isinstance(item, dict):
                 continue
-            text = (
-                item.get("content")
-                or item.get("text")
-                or item.get("full_text")
-                or item.get("chunk")
-                or ""
-            )
+            text = _result_text(item)
             if not text:
                 continue
             ref = _result_source_ref(item)

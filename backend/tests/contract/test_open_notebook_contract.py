@@ -186,10 +186,20 @@ async def test_not_embedded_and_unknown_status_stays_processing() -> None:
 
 async def test_search_pinned_call_and_response_shape() -> None:
     # Arrange
+    # The real payload, verbatim from a live instance: snippets live under `matches`
+    # (a LIST), the source is `parent_id`, and there is no scalar `content` field.
     handler, seen = _recorder(
         200,
         {
-            "results": [{"content": "Revenue grew 12%.", "parent_id": "source:src_456"}],
+            "results": [
+                {
+                    "id": "source:src_456",
+                    "matches": ["Revenue grew 12%."],
+                    "parent_id": "source:src_456",
+                    "similarity": 0.335,
+                    "title": "q3.docx",
+                }
+            ],
             "total_count": 1,
             "search_type": "vector",
         },
@@ -210,6 +220,49 @@ async def test_search_pinned_call_and_response_shape() -> None:
 
     # Assert -- response mapping
     assert results == [{"text": "Revenue grew 12%.", "source_ref": "source:src_456"}]
+
+
+async def test_multiple_matches_on_one_hit_are_all_kept() -> None:
+    """A hit carries every matched chunk; dropping any loses grounding the engine found."""
+    # Arrange
+    handler, _seen = _recorder(
+        200,
+        {
+            "results": [
+                {
+                    "matches": ["Bab 3 — Daftar BRImerchant", "Untuk Siapa Panduan Ini?"],
+                    "parent_id": "source:src_456",
+                }
+            ],
+            "total_count": 1,
+        },
+    )
+
+    # Act
+    results = await _client(handler).search(
+        allowed_source_refs={"source:src_456"}, query="merchant"
+    )
+
+    # Assert
+    assert len(results) == 1
+    assert "Bab 3 — Daftar BRImerchant" in results[0]["text"]
+    assert "Untuk Siapa Panduan Ini?" in results[0]["text"]
+
+
+async def test_a_hit_with_no_usable_text_is_dropped_not_fabricated() -> None:
+    """An unrecognised payload yields no grounding rather than an empty citation."""
+    # Arrange
+    handler, _seen = _recorder(
+        200, {"results": [{"parent_id": "source:src_456", "matches": []}], "total_count": 1}
+    )
+
+    # Act
+    results = await _client(handler).search(
+        allowed_source_refs={"source:src_456"}, query="merchant"
+    )
+
+    # Assert
+    assert results == []
 
 
 async def test_search_availability_failure_degrades_to_no_grounding() -> None:
