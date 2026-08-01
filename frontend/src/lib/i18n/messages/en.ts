@@ -48,6 +48,13 @@ export const en = {
   "workspace.fallbackName": "Notebook",
   "workspace.subtitle":
     "Upload sources, explore them with an auto guide and chat, then generate configurable slides.",
+  "workspace.openTools": "Tools",
+  "rightRail.guide": "Summary",
+  "rightRail.studio": "Studio",
+  "rightRail.close": "Close tools",
+  "tab.sources": "Sources",
+  "tab.chat": "Chat",
+  "tab.tools": "Tools",
 
   // Sources
   "sources.title": "Sources",

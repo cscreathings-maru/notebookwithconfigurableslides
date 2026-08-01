@@ -147,7 +147,11 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   };
 
   return (
-    <div className="card p-6 flex flex-col gap-6 h-full">
+    // No `h-full` and no inner scroller: the right rail is the single scroll region
+    // (`overflow-y-auto` on its content area). Forcing this panel to the rail's height
+    // squeezed the form into ~200px of its ~450px of controls, clipping a select
+    // mid-row. Flowing naturally lets the rail scroll the whole panel instead.
+    <div className="p-6 flex flex-col gap-6">
       <div className="flex items-center gap-2 border-b border-gray-100 pb-4">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-accent">
           <path d="M12 2a10 10 0 0 0-10 10c0 5.523 4.477 10 10 10s10-4.477 10-10a10 10 0 0 0-10-10z" />
@@ -156,7 +160,7 @@ export function StudioPanel({ projectId }: { projectId: string }) {
         <h2 className="text-base font-semibold text-gray-900">{t("studio.title")}</h2>
       </div>
 
-      <div className="flex flex-col gap-5 overflow-y-auto flex-1 pr-2">
+      <div className="flex flex-col gap-5">
         <label className="flex flex-col gap-1.5">
           <span className="text-sm font-medium text-gray-700">{t("studio.contentSource")}</span>
           <select

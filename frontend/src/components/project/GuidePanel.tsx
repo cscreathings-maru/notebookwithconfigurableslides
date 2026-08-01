@@ -46,7 +46,9 @@ export function GuidePanel({
   };
 
   return (
-    <div className="card p-6 flex flex-col gap-5 relative overflow-hidden">
+    // `overflow-hidden` clips the decorative blur; height is left to the rail, which
+    // owns the single scroll region for this column.
+    <div className="p-6 flex flex-col gap-5 relative overflow-hidden">
       {/* Decorative background element */}
       <div className="absolute -right-4 -top-4 w-24 h-24 bg-accent-faint rounded-full opacity-50 blur-xl pointer-events-none" />
 

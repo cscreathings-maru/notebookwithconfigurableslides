@@ -47,6 +47,13 @@ export const id: Partial<Record<MessageKey, string>> = {
   "workspace.fallbackName": "Notebook",
   "workspace.subtitle":
     "Unggah sumber, jelajahi dengan panduan otomatis dan obrolan, lalu hasilkan slide yang dapat dikonfigurasi.",
+  "workspace.openTools": "Alat",
+  "rightRail.guide": "Ringkasan",
+  "rightRail.studio": "Studio",
+  "rightRail.close": "Tutup alat",
+  "tab.sources": "Sumber",
+  "tab.chat": "Obrolan",
+  "tab.tools": "Alat",
 
   // Sources
   "sources.title": "Sumber",

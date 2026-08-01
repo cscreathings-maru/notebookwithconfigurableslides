@@ -68,13 +68,13 @@ export function AuthGuard({ children }: { children: ReactNode }) {
         </div>
       </aside>
       <main className="flex-1 flex flex-col h-screen overflow-y-auto animate-fade-in">
-        <div className="p-8 pb-16">
+        <div className="flex-1 flex flex-col p-8 pb-16 min-h-full">
           <button
             type="button"
             onClick={toggleNav}
             aria-label={collapsed ? t("nav.openSidebar") : t("nav.closeSidebar")}
             aria-expanded={!collapsed}
-            className="mb-8 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm transition-all hover:bg-gray-50 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-accent-light"
+            className="mb-8 shrink-0 inline-flex h-9 w-9 items-center justify-center rounded-lg border border-gray-200 bg-white text-gray-500 shadow-sm transition-all hover:bg-gray-50 hover:text-gray-900 focus:outline-none focus:ring-2 focus:ring-accent-light"
           >
             {collapsed ? <MenuIcon /> : <PanelLeftIcon />}
           </button>

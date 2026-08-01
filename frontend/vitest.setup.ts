@@ -39,3 +39,13 @@ if (typeof URL.createObjectURL === "undefined") {
 if (typeof URL.revokeObjectURL === "undefined") {
   Object.defineProperty(URL, "revokeObjectURL", { writable: true, value: vi.fn() });
 }
+
+// jsdom does not implement scrollIntoView. ChatPanel calls it on every message change
+// to keep the thread pinned to the latest turn, so without this stub any test that
+// renders a chat message throws from inside a passive effect.
+if (typeof Element !== "undefined" && typeof Element.prototype.scrollIntoView !== "function") {
+  Object.defineProperty(Element.prototype, "scrollIntoView", {
+    writable: true,
+    value: vi.fn(),
+  });
+}

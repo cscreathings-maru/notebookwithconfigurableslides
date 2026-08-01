@@ -5,6 +5,20 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type ChatMessage } from "@/services/api";
 
+/** Which citation snippet is expanded; at most one across the whole thread. */
+interface ActiveCitation {
+  messageId: string;
+  index: number;
+}
+
+function isCitationOpen(
+  active: ActiveCitation | null,
+  messageId: string,
+  index: number,
+): boolean {
+  return active?.messageId === messageId && active.index === index;
+}
+
 /**
  * Chat with sources — RAG Q&A with citations. A `pendingQuestion` (e.g. a clicked
  * suggested question from the guide) is sent automatically, then cleared.
@@ -23,6 +37,7 @@ export function ChatPanel({
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [activeCitation, setActiveCitation] = useState<ActiveCitation | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const load = useCallback(async () => {
@@ -40,6 +55,16 @@ export function ChatPanel({
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, busy]);
+
+  // Escape closes an expanded citation, the convention for any dismissible disclosure.
+  useEffect(() => {
+    if (!activeCitation) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setActiveCitation(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [activeCitation]);
 
   const send = useCallback(
     async (question: string) => {
@@ -86,8 +111,8 @@ export function ChatPanel({
   };
 
   return (
-    <div className="card flex flex-col h-full min-h-[400px]">
-      <div className="p-4 border-b border-gray-100 flex items-center gap-2 bg-white rounded-t-xl z-10 shadow-sm">
+    <div className="card flex flex-col h-full min-h-0 relative">
+      <div className="p-4 border-b border-gray-100 flex items-center gap-2 bg-white rounded-t-xl z-10 shadow-sm shrink-0">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-5 h-5 text-accent">
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
@@ -121,16 +146,48 @@ export function ChatPanel({
               <p className="whitespace-pre-wrap">{m.content}</p>
             </div>
             {m.citations.length > 0 && (
-              <div className="mt-2 flex flex-wrap gap-1.5 justify-start">
-                {m.citations.map((c, i) => (
-                  <span
-                    key={i}
-                    title={c.snippet}
-                    className="cursor-help rounded-md border border-accent/20 bg-accent/5 px-2 py-0.5 text-[11px] font-medium text-accent hover:bg-accent/10 transition-colors"
-                  >
-                    {t("chat.cite")} {i + 1}
-                  </span>
-                ))}
+              <div className="mt-2 flex w-full max-w-[90%] flex-col gap-2 md:max-w-[85%]">
+                <div className="flex flex-wrap gap-1.5">
+                  {m.citations.map((c, i) => {
+                    const active = isCitationOpen(activeCitation, m.id, i);
+                    return (
+                      <button
+                        key={i}
+                        type="button"
+                        aria-expanded={active}
+                        aria-controls={`cite-${m.id}-${i}`}
+                        onClick={() =>
+                          setActiveCitation(active ? null : { messageId: m.id, index: i })
+                        }
+                        className={`rounded-md border px-2 py-0.5 text-[11px] font-medium transition-colors focus:outline-none focus:ring-2 focus:ring-accent-light ${
+                          active
+                            ? "border-accent bg-accent text-white"
+                            : "border-accent/20 bg-accent/5 text-accent hover:bg-accent/10"
+                        }`}
+                      >
+                        {t("chat.cite")} {i + 1}
+                      </button>
+                    );
+                  })}
+                </div>
+                {/* Inline disclosure, NOT a floating popover: the message list is an
+                    `overflow-y-auto` container, which clips absolutely-positioned
+                    children regardless of z-index. A popover above the first visible
+                    message was cut off. Expanding in flow also reads better on mobile
+                    and needs no blur timer to dismiss. */}
+                {m.citations.map((c, i) =>
+                  isCitationOpen(activeCitation, m.id, i) ? (
+                    <div
+                      key={`panel-${i}`}
+                      id={`cite-${m.id}-${i}`}
+                      role="region"
+                      aria-label={`${t("chat.cite")} ${i + 1}`}
+                      className="animate-fade-in rounded-lg border border-accent/20 bg-accent/5 p-3 text-xs leading-relaxed text-gray-700"
+                    >
+                      {c.snippet}
+                    </div>
+                  ) : null,
+                )}
               </div>
             )}
           </div>
@@ -148,7 +205,7 @@ export function ChatPanel({
         <div ref={endRef} className="h-px w-full" />
       </div>
 
-      <div className="p-4 bg-white rounded-b-xl border-t border-gray-100">
+      <div className="p-4 bg-white rounded-b-xl border-t border-gray-100 shrink-0">
         {error && (
           <div role="alert" className="mb-3 rounded-lg bg-red-50 p-2.5 text-sm text-red-600">
             {error}

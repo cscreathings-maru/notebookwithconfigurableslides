@@ -23,7 +23,13 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
 
   const load = useCallback(async () => {
     try {
-      setSources(await api.listSources(projectId));
+      const data = await api.listSources(projectId);
+      setSources(data);
+      const hasInFlight = data.some(s => s.status === 'queued' || s.status === 'processing');
+      if (!hasInFlight && timer.current) {
+        clearInterval(timer.current);
+        timer.current = null;
+      }
     } catch {
       /* ignore transient */
     }
@@ -41,6 +47,7 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
     setError(null);
     try {
       await api.uploadSource(projectId, { file });
+      if (!timer.current) timer.current = setInterval(load, 2500);
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("sources.uploadFailed"));
@@ -54,6 +61,7 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
     try {
       await api.uploadSource(projectId, { url });
       setUrl("");
+      if (!timer.current) timer.current = setInterval(load, 2500);
       load();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("sources.addUrlFailed"));
