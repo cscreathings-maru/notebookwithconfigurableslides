@@ -2,8 +2,17 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { ChatSessionBar } from "@/components/project/ChatSessionBar";
+import { GenerateCard } from "@/components/project/GenerateCard";
 import { useT } from "@/lib/i18n/LocaleProvider";
-import { api, ApiError, type ChatMessage } from "@/services/api";
+import { api, ApiError, type ChatMessage, type ChatSession } from "@/services/api";
+
+/** First page size. Older turns load on demand rather than on every mount. */
+const PAGE_SIZE = 50;
+/** How long an undo stays offered after deleting a thread. */
+const UNDO_WINDOW_MS = 8000;
+/** Typing this opens the generation card (Phase D). Never inferred from prose. */
+const GENERATE_COMMAND = "/generate";
 
 /** Which citation snippet is expanded; at most one across the whole thread. */
 interface ActiveCitation {
@@ -34,23 +43,73 @@ export function ChatPanel({
 }) {
   const t = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [sessions, setSessions] = useState<ChatSession[]>([]);
+  const [activeSessionId, setActiveSessionId] = useState<string | null>(null);
+  const [hasOlder, setHasOlder] = useState(false);
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeCitation, setActiveCitation] = useState<ActiveCitation | null>(null);
+  const [generateFor, setGenerateFor] = useState<{ messageId?: string } | null>(null);
+  const [undo, setUndo] = useState<{ session: ChatSession } | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
-  const load = useCallback(async () => {
+  const loadSessions = useCallback(async () => {
     try {
-      setMessages(await api.listChat(projectId));
+      const list = await api.listChatSessions(projectId);
+      setSessions(list);
+      // Follow the server's ordering (most recently used first) rather than inventing
+      // a selection; only fall back when the active thread has gone away.
+      setActiveSessionId((current) =>
+        current && list.some((s) => s.id === current) ? current : (list[0]?.id ?? null),
+      );
     } catch {
       /* ignore transient */
     }
   }, [projectId]);
 
+  const load = useCallback(
+    async (sessionId?: string | null) => {
+      try {
+        const page = await api.listChat(projectId, {
+          sessionId: sessionId ?? undefined,
+          limit: PAGE_SIZE,
+        });
+        setMessages(page);
+        setHasOlder(page.length >= PAGE_SIZE);
+      } catch {
+        /* ignore transient */
+      }
+    },
+    [projectId],
+  );
+
+  const loadOlder = useCallback(async () => {
+    const oldest = messages[0];
+    if (!oldest) return;
+    try {
+      const older = await api.listChat(projectId, {
+        sessionId: activeSessionId ?? undefined,
+        limit: PAGE_SIZE,
+        before: oldest.created_at,
+      });
+      setHasOlder(older.length >= PAGE_SIZE);
+      setMessages((prev) => [...older, ...prev]);
+    } catch {
+      /* ignore transient */
+    }
+  }, [projectId, activeSessionId, messages]);
+
   useEffect(() => {
-    load();
-  }, [load]);
+    loadSessions();
+  }, [loadSessions]);
+
+  // Reload the thread whenever the active session changes. `undefined` on first paint
+  // (before sessions arrive) targets the project's most recent session server-side,
+  // so a project that has never been chatted with still renders.
+  useEffect(() => {
+    load(activeSessionId);
+  }, [load, activeSessionId]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -84,15 +143,17 @@ export function ChatPanel({
         },
       ]);
       try {
-        await api.sendChat(projectId, q);
-        await load();
+        await api.sendChat(projectId, q, activeSessionId ?? undefined);
+        await load(activeSessionId);
+        // The first question names the thread, so the switcher label is now stale.
+        await loadSessions();
       } catch (err) {
         setError(err instanceof ApiError ? err.message : t("chat.failed"));
       } finally {
         setBusy(false);
       }
     },
-    [busy, projectId, load, t],
+    [busy, projectId, load, loadSessions, activeSessionId, t],
   );
 
   // Auto-send a question routed in from the guide's suggested chips.
@@ -105,10 +166,77 @@ export function ChatPanel({
 
   const onSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    const q = input;
+    const raw = input.trim();
+    // Phase D: an EXPLICIT command opens the generation card. Nothing about a message
+    // is ever classified as generate-intent -- generation is billable and irreversible,
+    // so it takes a deliberate action, then a deliberate confirmation.
+    if (raw.toLowerCase() === GENERATE_COMMAND) {
+      setInput("");
+      setGenerateFor({});
+      return;
+    }
     setInput("");
-    send(q);
+    send(raw);
   };
+
+  // --- session actions --------------------------------------------------------
+
+  const createSession = async () => {
+    try {
+      const created = await api.createChatSession(projectId);
+      setSessions((prev) => [created, ...prev]);
+      setActiveSessionId(created.id);
+      setMessages([]);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("chat.failed"));
+    }
+  };
+
+  const renameSession = async (sessionId: string, title: string) => {
+    // Optimistic: renaming is cheap and reversible, so the label should not lag.
+    setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title } : s)));
+    try {
+      await api.renameChatSession(sessionId, title);
+    } catch {
+      await loadSessions();
+    }
+  };
+
+  const deleteSession = async (sessionId: string) => {
+    const victim = sessions.find((s) => s.id === sessionId);
+    if (!victim) return;
+    const remaining = sessions.filter((s) => s.id !== sessionId);
+    setSessions(remaining);
+    if (activeSessionId === sessionId) setActiveSessionId(remaining[0]?.id ?? null);
+    try {
+      // Server-side this is an archive, so `undo` restores the messages too.
+      await api.deleteChatSession(sessionId);
+      setUndo({ session: victim });
+    } catch (err) {
+      await loadSessions();
+      setError(err instanceof ApiError ? err.message : t("chat.failed"));
+    }
+  };
+
+  const undoDelete = async () => {
+    if (!undo) return;
+    const { session } = undo;
+    setUndo(null);
+    try {
+      await api.restoreChatSession(session.id);
+      await loadSessions();
+      setActiveSessionId(session.id);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : t("chat.failed"));
+    }
+  };
+
+  // The undo offer expires on its own; a toast that never leaves is its own bug.
+  useEffect(() => {
+    if (!undo) return;
+    const timer = setTimeout(() => setUndo(null), UNDO_WINDOW_MS);
+    return () => clearTimeout(timer);
+  }, [undo]);
 
   return (
     <div className="card flex flex-col h-full min-h-0 relative">
@@ -119,7 +247,45 @@ export function ChatPanel({
         <h2 className="text-base font-semibold text-gray-900">{t("chat.title")}</h2>
       </div>
 
+      <div className="shrink-0 border-b border-gray-100 bg-white px-4 py-2">
+        <ChatSessionBar
+          sessions={sessions}
+          activeId={activeSessionId}
+          busy={busy}
+          onSelect={setActiveSessionId}
+          onCreate={createSession}
+          onRename={renameSession}
+          onDelete={deleteSession}
+        />
+      </div>
+
+      {undo && (
+        <div
+          role="status"
+          className="flex shrink-0 items-center gap-3 border-b border-gray-100 bg-gray-900 px-4 py-2 text-xs text-white"
+        >
+          <span className="truncate">{t("chat.session.deleted")}</span>
+          <button
+            type="button"
+            onClick={undoDelete}
+            className="ml-auto shrink-0 font-semibold text-accent-light underline underline-offset-2 hover:text-white"
+          >
+            {t("chat.session.undo")}
+          </button>
+        </div>
+      )}
+
       <div className="flex-1 overflow-y-auto p-5 flex flex-col gap-5 bg-gray-50/50">
+        {hasOlder && (
+          <button
+            type="button"
+            onClick={loadOlder}
+            className="mx-auto shrink-0 rounded-full border border-gray-200 bg-white px-3 py-1 text-xs text-gray-600 hover:border-accent hover:text-accent"
+          >
+            {t("chat.loadOlder")}
+          </button>
+        )}
+
         {messages.length === 0 && !busy && (
           <div className="flex-1 flex flex-col items-center justify-center text-center">
             <div className="w-12 h-12 bg-white shadow-sm rounded-full flex items-center justify-center mb-3">
@@ -190,9 +356,20 @@ export function ChatPanel({
                 )}
               </div>
             )}
+            {/* Offered, never auto-run. The card that opens shows every parameter
+                before anything billable happens. */}
+            {m.role === "assistant" && !m.id.startsWith("pending-") && (
+              <button
+                type="button"
+                onClick={() => setGenerateFor({ messageId: m.id })}
+                className="mt-1.5 rounded-md px-1.5 py-0.5 text-[11px] font-medium text-gray-400 transition-colors hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent-light"
+              >
+                {t("generate.fromThis")}
+              </button>
+            )}
           </div>
         ))}
-        
+
         {busy && (
           <div className="self-start animate-fade-in">
             <div className="bg-white border border-gray-100 rounded-2xl rounded-tl-sm px-4 py-3 shadow-sm flex gap-1.5 items-center h-[46px]">
@@ -212,7 +389,30 @@ export function ChatPanel({
           </div>
         )}
 
-        <form onSubmit={onSubmit} className="relative flex items-center">
+        {generateFor && (
+          <div className="mb-3">
+            <GenerateCard
+              projectId={projectId}
+              chatMessageId={generateFor.messageId}
+              onCancel={() => setGenerateFor(null)}
+              onGenerated={() => setGenerateFor(null)}
+            />
+          </div>
+        )}
+
+        <form onSubmit={onSubmit} className="relative flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => setGenerateFor({})}
+            aria-label={t("generate.open")}
+            title={`${t("generate.open")} (${GENERATE_COMMAND})`}
+            className="shrink-0 rounded-full border border-gray-200 bg-white p-2 text-gray-500 transition-colors hover:border-accent hover:text-accent focus:outline-none focus:ring-2 focus:ring-accent-light"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
           <input
             value={input}
             onChange={(e) => setInput(e.target.value)}

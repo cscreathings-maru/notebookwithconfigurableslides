@@ -13,7 +13,7 @@
  * tests assert the inline-disclosure behaviour that replaced it.
  */
 
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -45,10 +45,24 @@ function renderPanel() {
   );
 }
 
+const SESSION_A = {
+  id: "s-a",
+  project_id: "p1",
+  title: "Onboarding merchant",
+  created_at: new Date().toISOString(),
+  updated_at: new Date().toISOString(),
+};
+const SESSION_B = { ...SESSION_A, id: "s-b", title: "Harga paket" };
+
+function stubSessions(sessions = [SESSION_A, SESSION_B]) {
+  vi.spyOn(api, "listChatSessions").mockResolvedValue(sessions as never);
+}
+
 describe("ChatPanel citations", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(api, "listChat").mockResolvedValue(ANSWERED as never);
+    stubSessions([]);
   });
 
   it("renders one activatable control per citation", async () => {
@@ -120,5 +134,107 @@ describe("ChatPanel citations", () => {
 
     // Assert
     await waitFor(() => expect(screen.queryByText(SNIPPET_A)).not.toBeInTheDocument());
+  });
+});
+
+describe("ChatPanel sessions", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listChat").mockResolvedValue([] as never);
+    stubSessions();
+  });
+
+  it("shows the active session and lets the user switch threads", async () => {
+    // Arrange
+    const user = userEvent.setup();
+    renderPanel();
+    expect(await screen.findByRole("button", { name: /Onboarding merchant/ })).toBeInTheDocument();
+
+    // Act -- open the switcher and pick the other thread
+    await user.click(screen.getByRole("button", { name: /Onboarding merchant/ }));
+    const options = await screen.findAllByRole("option");
+    await user.click(within(options[1]).getByRole("button", { name: "Harga paket" }));
+
+    // Assert -- the thread was reloaded scoped to the chosen session
+    await waitFor(() =>
+      expect(api.listChat).toHaveBeenCalledWith("p1", expect.objectContaining({ sessionId: "s-b" })),
+    );
+  });
+
+  it("offers undo after deleting a thread and restores it", async () => {
+    // Arrange -- delete is an archive server-side, so undo brings the messages back
+    const user = userEvent.setup();
+    vi.spyOn(api, "deleteChatSession").mockResolvedValue(SESSION_A as never);
+    const restore = vi.spyOn(api, "restoreChatSession").mockResolvedValue(SESSION_A as never);
+    renderPanel();
+
+    // Act
+    await user.click(await screen.findByRole("button", { name: /Onboarding merchant/ }));
+    await user.click(screen.getByRole("button", { name: /Hapus: Onboarding merchant/ }));
+
+    // Assert -- undo is offered, and taking it calls restore
+    const undo = await screen.findByRole("button", { name: "Urungkan" });
+    await user.click(undo);
+    await waitFor(() => expect(restore).toHaveBeenCalledWith("s-a"));
+  });
+});
+
+describe("ChatPanel generation trigger", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, "listChat").mockResolvedValue(ANSWERED as never);
+    stubSessions();
+  });
+
+  it("opens the confirmation card on the explicit /generate command", async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const send = vi.spyOn(api, "sendChat");
+    renderPanel();
+
+    // Act
+    await user.type(screen.getByPlaceholderText(/Tanyakan tentang sumber Anda/i), "/generate{Enter}");
+
+    // Assert -- a card appears and NO message was sent
+    expect(await screen.findByRole("form", { name: "Hasilkan slide" })).toBeInTheDocument();
+    expect(send).not.toHaveBeenCalled();
+  });
+
+  it("never treats ordinary prose as a request to generate", async () => {
+    // Arrange -- the exact failure mode intent detection would have: a user musing
+    // about slides must not spend quota.
+    const user = userEvent.setup();
+    const generate = vi.spyOn(api, "generateDeck");
+    vi.spyOn(api, "sendChat").mockResolvedValue(ANSWERED[0] as never);
+    renderPanel();
+
+    // Act
+    await user.type(
+      screen.getByPlaceholderText(/Tanyakan tentang sumber Anda/i),
+      "bisakah kamu ringkas ini seperti presentasi?{Enter}",
+    );
+
+    // Assert -- sent as a question; nothing billable fired, no card opened
+    await waitFor(() => expect(api.sendChat).toHaveBeenCalled());
+    expect(generate).not.toHaveBeenCalled();
+    expect(screen.queryByRole("form", { name: "Hasilkan slide" })).not.toBeInTheDocument();
+  });
+
+  it("requires a second, deliberate click before anything is generated", async () => {
+    // Arrange
+    const user = userEvent.setup();
+    const generate = vi.spyOn(api, "generateDeck").mockResolvedValue({ id: "g1" } as never);
+    renderPanel();
+
+    // Act -- opening the card must not generate
+    await user.click(screen.getByRole("button", { name: "Hasilkan slide" }));  // the ＋ opener
+    await screen.findByRole("form", { name: "Hasilkan slide" });
+    expect(generate).not.toHaveBeenCalled();
+
+    // Only confirming does
+    await user.click(screen.getByRole("button", { name: "Hasilkan" }));
+
+    // Assert
+    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
   });
 });

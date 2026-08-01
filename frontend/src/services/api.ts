@@ -299,6 +299,23 @@ export interface ChatMessage {
   created_at: string;
 }
 
+/** One named thread within a project. `title` is null until the first question. */
+export interface ChatSession {
+  id: string;
+  project_id: string;
+  title: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ChatPage {
+  /** Omit to target the project's most recent session (created on demand). */
+  sessionId?: string;
+  limit?: number;
+  /** ISO timestamp cursor: return turns strictly older than this. */
+  before?: string;
+}
+
 export interface ModelOption {
   id: string;
   default: boolean;
@@ -373,13 +390,38 @@ export const api = {
     request<Guide>(`/projects/${projectId}/guide`, { method: "POST" }),
 
   // --- Chat with sources (RAG + citations) ---
-  listChat: (projectId: string) =>
-    request<ChatMessage[]>(`/projects/${projectId}/chat`),
-  sendChat: (projectId: string, question: string) =>
+  listChat: (projectId: string, page: ChatPage = {}) => {
+    const params = new URLSearchParams();
+    if (page.sessionId) params.set("session_id", page.sessionId);
+    if (page.limit !== undefined) params.set("limit", String(page.limit));
+    if (page.before) params.set("before", page.before);
+    const qs = params.toString();
+    return request<ChatMessage[]>(`/projects/${projectId}/chat${qs ? `?${qs}` : ""}`);
+  },
+  sendChat: (projectId: string, question: string, sessionId?: string) =>
     request<ChatMessage>(`/projects/${projectId}/chat`, {
       method: "POST",
-      body: JSON.stringify({ question }),
+      body: JSON.stringify(sessionId ? { question, session_id: sessionId } : { question }),
     }),
+
+  // --- Chat sessions (named threads within a project) ---
+  listChatSessions: (projectId: string) =>
+    request<ChatSession[]>(`/projects/${projectId}/chat/sessions`),
+  createChatSession: (projectId: string, title?: string) =>
+    request<ChatSession>(`/projects/${projectId}/chat/sessions`, {
+      method: "POST",
+      body: JSON.stringify({ title: title ?? null }),
+    }),
+  renameChatSession: (sessionId: string, title: string) =>
+    request<ChatSession>(`/chat/sessions/${sessionId}`, {
+      method: "PATCH",
+      body: JSON.stringify({ title }),
+    }),
+  // Soft delete: the thread is hidden but every message survives for `restore`.
+  deleteChatSession: (sessionId: string) =>
+    request<ChatSession>(`/chat/sessions/${sessionId}`, { method: "DELETE" }),
+  restoreChatSession: (sessionId: string) =>
+    request<ChatSession>(`/chat/sessions/${sessionId}/restore`, { method: "POST" }),
 
   // --- Models (OpenRouter dropdown) ---
   listModels: () => request<ModelOption[]>("/models"),
