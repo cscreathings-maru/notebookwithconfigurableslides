@@ -7,7 +7,7 @@ that proves it is still open and the check that will prove it closed.
 **Status legend:** `BLOCKED` — cannot proceed in any environment reachable today ·
 `OPEN` — actionable now · `DEFERRED` — actionable, scheduled for a named later phase.
 
-Last reconciled: **2026-07-29** (post Phase 0 recovery; editor round-trip deferred to backlog).
+Last reconciled: **2026-07-31** (post workspace Phases A–D; ingestion and RAG grounding fixed).
 
 ---
 
@@ -101,6 +101,29 @@ and TD-11 additionally needs a template whose registration actually fell back.
 | **TD-24** | **Editing round-trip: an edited deck is not downloadable.** Deck bytes are produced once at generation and stored in MinIO. Editing in the Presenton studio updates the engine's own copy, so the editor shows the edit and NoteAI's download returns the pre-edit file — silently. Full analysis and phased plan in [`PLAN-EDITOR-ROUNDTRIP.md`](PLAN-EDITOR-ROUNDTRIP.md) | 🟠 | 2026-07-29 | **backlog** | Edit a deck in the studio, download from NoteAI, and the file contains the edit |
 | **TD-25** | Engine-side state (every template layout and deck edit) lives in one SQLite file in the `presenton_data` volume. One manual backup exists; no schedule, and no restore has ever been tested | 🟠 | 2026-07-29 | **backlog** | Scheduled off-host backup **and** a verified restore |
 | **TD-26** | A NoteAI `Template` version is immutable once used by a `Generation`, but an engine-side layout edit changes rendering without bumping it — so a pinned "v1" can render differently over time. Unclear whether editing a template retro-changes decks already generated from it | 🟡 | 2026-07-29 | **backlog** | The rule is decided and documented; behaviour matches it |
+| **TD-27** | **Docling does not survive container recreation.** `docker-entrypoint.sh` installs it into `/app/.venv`, but the only volume on `open-notebook` is `notebook_data:/app/data`. A plain `restart` keeps it; `--force-recreate`, an image bump or any compose edit to that service silently removes the extractor, and every `.docx`/`.pptx`/`.pdf` upload fails again with "Could not extract content". This already happened once mid-session | 🔴 | 2026-07-31 | **next deploy window** | See the recipe below; a `--force-recreate` is followed by a successful `.docx` ingestion with `text_len > 0` |
+| **TD-28** | **A citation cannot link back to its source.** `Citation.source_ref` carries the *engine's* id (`source:abc…`), while the sources rail keys off the orchestrator's own `Source.id` (a UUID). Nothing maps between them, so "click a citation → highlight the source" is not implementable on the client today | 🟡 | 2026-07-31 | **Phase E** | The chat response resolves `source_ref` → `source_id`, and clicking a citation selects that row in the sources rail |
+| **TD-29** | Local `npm run build` fails on `@next/swc-darwin-arm64` — the package directory exists but its `.node` binary is missing, and the host runs Node v25 against Next 14.2.5. Docker builds are unaffected, so this only costs local verification | 🟢 | 2026-07-31 | **anytime** | `rm -rf node_modules && npm install` under Node 20, then `npm run build` succeeds |
+
+### TD-27 — the fix, written down before it is needed again
+
+Do **not** mount a volume over `/app/.venv`: a named volume shadows the image's own
+dependencies, so a future `open_notebook` upgrade would keep the stale venv and break in a
+new way. Bake the extractor into an image instead, so it is part of the artifact:
+
+```dockerfile
+# deploy/open-notebook/Dockerfile
+FROM lfnovo/open_notebook:v1-latest
+RUN uv add docling && python -c "import docling; print(docling.__version__)"
+```
+
+and in `docker-compose.lite.yml`, replace `image:` on the `open-notebook` service with
+`build: { context: ./open-notebook }`. Rebuilding then reinstalls Docling deterministically
+and `--force-recreate` stops being destructive.
+
+**Untested.** This was written while the Docker daemon was unavailable, so it has never been
+built. Verify in a deploy window, not on a working stack — ingestion currently works, and an
+unverified image swap is exactly the kind of change that would break it.
 
 ---
 
@@ -133,3 +156,5 @@ When a phase closes, update this file in the same commit as its report:
 | **TD-17** | README citing the archived report as quality evidence | `52272a2` (T-2.6) | Testing section rewritten; the citation is now a correction, not a claim |
 | **TD-18** | Alembic revision id length convention undocumented | `4688cc0` (T-2.7) | Recorded in `docs/ARCHITECTURE.md` §8 |
 | **TD-20** | Migrations only exercised against SQLite | `4688cc0` (T-2.7) | CI `migrations` job round-trips against real Postgres 16 |
+| **TD-30** | `POST /projects/{id}/guide` returning **422** in production, suspected frontend/backend contract mismatch | investigated 2026-07-31 | **Not a defect.** It is `guide/service.py:58` refusing to generate — "No indexed source content yet" — which was true while ingestion was broken. Correct behaviour; the 422 is a `ValidationError` by this codebase's convention. Closed without a code change |
+| **TD-31** | The project workspace page had **no tests at all**, which is how a build-breaking change to it shipped | `186e14c` + this commit | `page.test.tsx` asserts the shell renders, every tab label resolves from the dictionary rather than leaking a raw key, and the right rail switches between guide and Studio |

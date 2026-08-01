@@ -250,6 +250,18 @@ coherent to live.
 
 ---
 
+## 6b. Delivered
+
+| Phase | Status | Commit |
+|---|---|---|
+| **A** — bounded height, real citations, polling stop | shipped, verified in a browser (40 messages / 4620px scroll inside a 502px window, page does not scroll) | `843298b` |
+| **B** — guide right, Studio as tab 2, responsive | shipped, verified at 1440 / 1100 / mobile | `843298b` |
+| **C** — multi-session chat | backend `3890b0f` (migration verified against a seeded pre-0007 database, upgrade + downgrade); frontend `186e14c` | `3890b0f`, `186e14c` |
+| **D** — `/generate` command + confirmation card | shipped; three tests pin that nothing billable fires without a deliberate confirmation | `186e14c` |
+
+Not verified in a browser: Phase C/D, because the Docker daemon stopped after a host
+resource exhaustion. Typecheck, lint and 80 frontend + 222 backend tests are green.
+
 ## 7. Open items carried in
 
 - `POST /projects/{id}/guide` returned **422** in production logs on 2026-07-31. Not
