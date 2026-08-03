@@ -224,7 +224,12 @@ services:
       LLM: "custom"                          # OpenAI-compatible → OpenRouter
       CUSTOM_LLM_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
       CUSTOM_LLM_API_KEY: ${OPENROUTER_API_KEY}
-      CUSTOM_MODEL: ${OPENROUTER_MODEL:-google/gemini-2.5-flash}
+      # Slide generation is a structured-JSON job; chat is prose. They want different
+      # models, so this no longer inherits OPENROUTER_MODEL. It used to read
+      # `${OPENROUTER_MODEL:-google/gemini-2.5-flash}`, and because OPENROUTER_MODEL is
+      # always set the gemini default never applied -- the deck engine silently ran
+      # whatever the chat model was, and changing chat changed slides.
+      CUSTOM_MODEL: ${PRESENTON_MODEL:-google/gemini-2.5-flash}
       IMAGE_PROVIDER: ${IMAGE_PROVIDER}
       PEXELS_API_KEY: ${PEXELS_API_KEY}
       CAN_CHANGE_KEYS: ${PRESENTON_CAN_CHANGE_KEYS}

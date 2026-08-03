@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ChatSessionBar } from "@/components/project/ChatSessionBar";
 import { GenerateCard } from "@/components/project/GenerateCard";
+import { Markdown } from "@/components/ui/Markdown";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type ChatMessage, type ChatSession } from "@/services/api";
 
@@ -309,7 +310,7 @@ export function ChatPanel({
                   : "bg-white border border-gray-100 text-gray-800 rounded-2xl rounded-tl-sm"
               }`}
             >
-              <p className="whitespace-pre-wrap">{m.content}</p>
+              <Markdown density="compact">{m.content}</Markdown>
             </div>
             {m.citations.length > 0 && (
               <div className="mt-2 flex w-full max-w-[90%] flex-col gap-2 md:max-w-[85%]">

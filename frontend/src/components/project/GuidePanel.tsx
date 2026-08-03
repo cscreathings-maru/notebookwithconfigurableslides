@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 
+import { Markdown } from "@/components/ui/Markdown";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type Guide } from "@/services/api";
 
@@ -114,8 +115,11 @@ export function GuidePanel({
 
       {guide?.summary && (
         <div className="flex flex-col gap-5 animate-fade-in relative z-10">
-          <div className="prose prose-sm max-w-none text-gray-700 leading-relaxed bg-gray-50 p-4 rounded-xl border border-gray-100">
-            {guide.summary}
+          {/* `prose`/`prose-sm` were no-ops here: @tailwindcss/typography is not a
+              dependency of this project, so the summary rendered as unstyled raw
+              markdown. `Markdown` does the job the class names implied. */}
+          <div className="rounded-xl border border-gray-100 bg-gray-50 p-4 text-gray-700">
+            <Markdown>{guide.summary}</Markdown>
           </div>
           {guide.suggested_questions.length > 0 && (
             <div className="flex flex-col gap-3">
