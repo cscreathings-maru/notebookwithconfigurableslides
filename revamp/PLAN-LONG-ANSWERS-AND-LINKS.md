@@ -1,7 +1,19 @@
 # Truncated answers and unusable link sources — assessment & plan
 
-Status: **proposal**. Written 2026-07-31 from two reports against the deployed stack:
-answers cut off mid-sentence, and a URL source that reports "Siap" but yields nothing.
+Status: **assessed, decisions taken, NOT started.** Written 2026-07-31 from two reports
+against the deployed stack: answers cut off mid-sentence, and a URL source that reports
+"Siap" but yields nothing.
+
+**Decisions (product owner, 2026-07-31):**
+
+| Question | Decision |
+|---|---|
+| Build now? | **No — plan only.** Nothing in F1–F5 is implemented. |
+| Token ceiling | **8000**, with "Lanjutkan" as the overflow path rather than a higher cap |
+| Link sources | **Fail honestly and guide to file upload.** Crawl4AI stays off; F3 descoped |
+
+These are settled; §"Open questions" below is retained only as the reasoning that led
+here, not as live questions.
 
 ---
 
@@ -130,7 +142,11 @@ own reason.
 
 ### Phase F1 — stop truncating, stop hiding it *(~0.5 day)*
 
-- `chat_llm_max_tokens` in `core/config.py`, default **4000**, env-overridable
+- `chat_llm_max_tokens` in `core/config.py`, default **8000**, env-overridable.
+  Chosen over 4000 deliberately: the cap is the *safety net*, not the answer-length
+  policy. Most replies land far below it, so average cost barely moves; what changes
+  is that hitting it becomes rare. Anything still longer is handled by "Lanjutkan"
+  rather than by raising the ceiling again
 - Capture `finish_reason` in `LlmClient.chat`; return it on `ChatAnswer`
 - Persist it on the assistant message; expose on the chat response
 - UI: a "jawaban terpotong" badge plus a **Lanjutkan** action that re-prompts with the
@@ -144,14 +160,24 @@ own reason.
 - Regression test: engine says `completed`, `embedded: false`, `embedded_chunks: 0`
   → orchestrator reports **failed**, never ready
 
-### Phase F3 — link sources that can actually work *(~0.5 day + rebuild)*
+### Phase F3 — link limits, documented rather than removed *(~0.25 day)* — **DESCOPED**
 
-- Fix **TD-27** first (bake Docling into an image); enable Crawl4AI in the same image
-  so neither is lost on recreate
-- Document the limits table above in the Sources panel — inline hint next to the URL
-  field, not buried
-- Optional: a pre-flight `HEAD`/fetch check when a URL is added, so an unfetchable
-  page is refused at paste time rather than after a minute of processing
+Crawl4AI stays **off**. The decision is to make link sources fail honestly rather than
+to widen what they can reach — which also avoids compounding TD-27, since Crawl4AI
+installs into the same volume-less `/app/.venv` as Docling.
+
+Remaining scope is therefore documentation-in-the-UI only:
+
+- Show the supported/unsupported table above as an inline hint beside the URL field
+- A failed URL names the likely cause and points to file upload
+
+Deferred (revisit only if link ingestion becomes a real user need):
+
+- Enabling Crawl4AI for JS-rendered pages — **requires TD-27 closed first**
+- Pre-flight fetch check at paste time
+
+Authenticated pages remain out of scope permanently: there is no credential path for
+link sources, and "download it and upload the file" is the honest answer.
 
 ### Phase F4 — the reader panel *(~1 day)*
 
@@ -189,12 +215,22 @@ visible before a URL is submitted, not after it fails.
 is pressed, then the full text opens in the right rail with its citations, and the
 conversation remains visible.
 
-**AC-7** Enabling Crawl4AI survives `docker compose up -d --force-recreate
-open-notebook` — i.e. TD-27 is closed rather than duplicated.
+**AC-7** *(deferred with F3's Crawl4AI scope)* Enabling Crawl4AI survives
+`docker compose up -d --force-recreate open-notebook` — i.e. TD-27 is closed rather
+than duplicated. Not in scope while Crawl4AI stays off.
 
 ---
 
-## Open questions
+## Ordering note
+
+F1 and F2 are independent of each other and of any container change, so either can go
+first. F4 depends on nothing but is only worth doing once F1 exists — a reader panel
+for answers that are still being truncated would present a complete-looking document
+that is in fact cut off, which is worse than the current bubble.
+
+---
+
+## Open questions — resolved, kept as reasoning
 
 1. **Crawl4AI**: enable it (+~150MB Chromium, slower first start) or keep link sources
    limited to server-rendered pages and steer users to file upload?
