@@ -121,6 +121,15 @@ class Settings(BaseSettings):
     outline_llm_temperature: float = Field(default=0.1)
     outline_llm_max_tokens: int = Field(default=2000)
 
+    # --- Chat LLM (RAG Q&A + guide) ---
+    # A safety net, not an answer-length policy: most replies land far below this, so
+    # raising it barely moves average cost. It used to be hard-coded at 1000 — the
+    # lowest cap in the codebase, and the only one on a surface producing long prose —
+    # which truncated ordinary answers (mid-sentence, even inside table cells) with no
+    # signal to the caller. Anything still cut off is meant to be continued via
+    # ChatService.continue_message, not chased by raising this further.
+    chat_llm_max_tokens: int = Field(default=8000, alias="CHAT_LLM_MAX_TOKENS")
+
     # --- Metering (fallback pricing when a tenant has no per-model rates) ---
     usage_cost_per_1k_tokens: float = Field(default=0.002)
     default_input_cost_per_1k: float = Field(default=0.0014)

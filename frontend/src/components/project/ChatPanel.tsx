@@ -14,6 +14,9 @@ const PAGE_SIZE = 50;
 const UNDO_WINDOW_MS = 8000;
 /** Typing this opens the generation card (Phase D). Never inferred from prose. */
 const GENERATE_COMMAND = "/generate";
+/** F4: longer than this collapses inline with "Lihat selengkapnya", opening the
+ *  full-height reader instead of growing the bubble indefinitely. */
+const READER_COLLAPSE_CHARS = 1200;
 
 /** Which citation snippet is expanded; at most one across the whole thread. */
 interface ActiveCitation {
@@ -37,10 +40,16 @@ export function ChatPanel({
   projectId,
   pendingQuestion,
   onConsumed,
+  onOpenReader,
+  onReaderMessageUpdated,
 }: {
   projectId: string;
   pendingQuestion: string | null;
   onConsumed: () => void;
+  /** F4: open a message in the right-rail reader tab. */
+  onOpenReader?: (message: ChatMessage) => void;
+  /** F1: tell the reader (if this message happens to be open there) that it grew. */
+  onReaderMessageUpdated?: (message: ChatMessage) => void;
 }) {
   const t = useT();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -53,6 +62,7 @@ export function ChatPanel({
   const [activeCitation, setActiveCitation] = useState<ActiveCitation | null>(null);
   const [generateFor, setGenerateFor] = useState<{ messageId?: string } | null>(null);
   const [undo, setUndo] = useState<{ session: ChatSession } | null>(null);
+  const [continuingId, setContinuingId] = useState<string | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
 
   const loadSessions = useCallback(async () => {
@@ -141,6 +151,7 @@ export function ChatPanel({
           content: q,
           citations: [],
           created_at: new Date().toISOString(),
+          truncated: false,
         },
       ]);
       try {
@@ -239,6 +250,26 @@ export function ChatPanel({
     return () => clearTimeout(timer);
   }, [undo]);
 
+  // F1: append the rest of a truncated answer, in place -- same message id, grown
+  // content, flag cleared. Also pokes the reader tab in case this message is open
+  // there, so it does not keep showing a stale, still-truncated copy.
+  const continueMessage = useCallback(
+    async (messageId: string) => {
+      setContinuingId(messageId);
+      setError(null);
+      try {
+        const updated = await api.continueChat(messageId);
+        setMessages((prev) => prev.map((m) => (m.id === messageId ? updated : m)));
+        onReaderMessageUpdated?.(updated);
+      } catch (err) {
+        setError(err instanceof ApiError ? err.message : t("chat.failed"));
+      } finally {
+        setContinuingId(null);
+      }
+    },
+    [t, onReaderMessageUpdated],
+  );
+
   return (
     <div className="card flex flex-col h-full min-h-0 relative">
       <div className="p-4 border-b border-gray-100 flex items-center gap-2 bg-white rounded-t-xl z-10 shadow-sm shrink-0">
@@ -298,7 +329,12 @@ export function ChatPanel({
           </div>
         )}
         
-        {messages.map((m) => (
+        {messages.map((m) => {
+          const isLong = m.content.length > READER_COLLAPSE_CHARS;
+          const preview = isLong
+            ? `${m.content.slice(0, READER_COLLAPSE_CHARS)}…`
+            : m.content;
+          return (
           <div
             key={m.id}
             className={`flex flex-col animate-slide-up ${m.role === "user" ? "items-end" : "items-start"}`}
@@ -310,8 +346,43 @@ export function ChatPanel({
                   : "bg-white border border-gray-100 text-gray-800 rounded-2xl rounded-tl-sm"
               }`}
             >
-              <Markdown density="compact">{m.content}</Markdown>
+              <Markdown density="compact">{preview}</Markdown>
+              {/* F4: the reader panel, not the bubble, is where a long answer is meant
+                  to be read in full -- an unbounded bubble is the scroll problem
+                  Phase A fixed, reintroduced one message at a time. */}
+              {isLong && (
+                <button
+                  type="button"
+                  onClick={() => onOpenReader?.(m)}
+                  className={`mt-2 text-xs font-semibold underline underline-offset-2 ${
+                    m.role === "user" ? "text-white/90 hover:text-white" : "text-accent"
+                  }`}
+                >
+                  {t("reader.seeMore")}
+                </button>
+              )}
             </div>
+            {/* F1: the provider's own signal, surfaced. A cut-off answer used to
+                render identically to a complete one -- this is the visible marker
+                plus the one action that fixes it, right where the cut happened. */}
+            {m.truncated && (
+              <div className="mt-1.5 flex w-full max-w-[90%] items-center gap-2 rounded-lg border border-amber-200 bg-amber-50 px-3 py-1.5 text-xs text-amber-800 md:max-w-[85%]">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5 shrink-0">
+                  <circle cx="12" cy="12" r="10" />
+                  <line x1="12" y1="8" x2="12" y2="12" />
+                  <line x1="12" y1="16" x2="12.01" y2="16" />
+                </svg>
+                <span className="flex-1">{t("chat.truncated")}</span>
+                <button
+                  type="button"
+                  onClick={() => continueMessage(m.id)}
+                  disabled={continuingId === m.id}
+                  className="shrink-0 font-semibold underline underline-offset-2 hover:no-underline disabled:opacity-50"
+                >
+                  {continuingId === m.id ? t("chat.continuing") : t("chat.continue")}
+                </button>
+              </div>
+            )}
             {m.citations.length > 0 && (
               <div className="mt-2 flex w-full max-w-[90%] flex-col gap-2 md:max-w-[85%]">
                 <div className="flex flex-wrap gap-1.5">
@@ -369,7 +440,8 @@ export function ChatPanel({
               </button>
             )}
           </div>
-        ))}
+          );
+        })}
 
         {busy && (
           <div className="self-start animate-fade-in">

@@ -46,6 +46,11 @@ class ChatAnswer:
     text: str
     tokens_in: int
     tokens_out: int
+    # True when the provider stopped because `max_tokens` was hit
+    # (`finish_reason == "length"`), not because it had nothing more to say. The
+    # provider always reports this; discarding it made a cut-off answer render
+    # identically to a complete one.
+    truncated: bool = False
 
 
 class LlmClient(EngineClient):
@@ -168,7 +173,8 @@ class LlmClient(EngineClient):
             model_override=model_override,
         )
         try:
-            text = body["choices"][0]["message"]["content"] or ""
+            choice = body["choices"][0]
+            text = choice["message"]["content"] or ""
         except (KeyError, IndexError) as exc:
             raise EngineError("LLM returned an unparseable chat response.") from exc
 
@@ -177,6 +183,7 @@ class LlmClient(EngineClient):
             text=text.strip(),
             tokens_in=int(usage.get("prompt_tokens", 0)),
             tokens_out=int(usage.get("completion_tokens", 0)),
+            truncated=choice.get("finish_reason") == "length",
         )
 
 

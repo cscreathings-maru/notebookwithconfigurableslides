@@ -141,10 +141,19 @@ class FakeLlm:
     """Deterministic-structure LLM fake. Talking-point wording varies per call to
     prove that structure (sections/order) is fixed independently of the model."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, truncate_first_answer: bool = False) -> None:
         self._call = 0
         self.calls: list[str] = []
         self.chat_models: list[str | None] = []
+        # What max_tokens each `chat()` call actually received, in order — lets a
+        # test assert the configured cap reached the provider instead of a stale
+        # hard-coded one.
+        self.max_tokens_seen: list[int] = []
+        # F1: simulate the provider hitting its token cap on the FIRST grounded
+        # answer only, so a test can exercise both "answer arrives truncated" and,
+        # via a second `chat()` call (continue_message's), "continuing clears it".
+        self._truncate_first_answer = truncate_first_answer
+        self._answer_calls = 0
 
     async def talking_points(self, *, section_ids, context, profile, provider_config):
         from src.outline.builder import LlmResult
@@ -171,8 +180,27 @@ class FakeLlm:
 
         self.calls.append("chat")
         self.chat_models.append(model_override or provider_config.get("model"))
-        if "JSON" in system or "question" in system.lower():
+        self.max_tokens_seen.append(max_tokens)
+        # "JSON" alone: guide's suggested-questions prompt asks for STRICT JSON, but
+        # chat's OWN system prompt ("You answer questions strictly...") also contains
+        # the word "question" -- `or "question" in system.lower()` used to match that
+        # too, so every ordinary chat answer silently came back as the JSON array
+        # instead of prose. Harmless while tests only asserted `content` was truthy,
+        # but it would have hidden real answer content in any test that checked it.
+        if "JSON" in system:
             text = '["What drove revenue growth?", "What are the key risks?", "What is the outlook?"]'
+            return ChatAnswer(text=text, tokens_in=100, tokens_out=50)
+
+        self._answer_calls += 1
+        if self._truncate_first_answer and self._answer_calls == 1:
+            return ChatAnswer(
+                text="Revenue grew 12% YoY, driven mainly by",
+                tokens_in=100,
+                tokens_out=50,
+                truncated=True,
+            )
+        if "continuing" in system.lower():
+            text = "the launch of the new product line in Q3."
         else:
             text = "Grounded overview: revenue grew 12% YoY based on the sources."
         return ChatAnswer(text=text, tokens_in=100, tokens_out=50)

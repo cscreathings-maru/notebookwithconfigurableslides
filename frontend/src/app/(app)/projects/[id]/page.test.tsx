@@ -108,4 +108,32 @@ describe("project workspace shell", () => {
       expect(screen.getAllByText(msg(key)).length).toBeGreaterThan(0);
     }
   });
+
+  it("F4: opening a long answer from chat shows it in a Reader tab in the right rail", async () => {
+    // Arrange -- ChatPanel and the right rail are SIBLINGS; the reader message has
+    // to travel up to this page and back down, which is exactly the wiring a
+    // ChatPanel-only test cannot exercise. No "Pembaca" tab exists until something
+    // is actually opened.
+    const longAnswer = {
+      id: "m-long",
+      role: "assistant" as const,
+      content: "Kalimat panjang tentang onboarding merchant. ".repeat(60),
+      citations: [],
+      created_at: new Date().toISOString(),
+      truncated: false,
+    };
+    vi.spyOn(api, "listChat").mockResolvedValue([longAnswer] as never);
+    const user = userEvent.setup();
+    renderPage();
+    await screen.findByRole("heading", { name: "Onboarding new" });
+    expect(screen.queryByRole("button", { name: msg("rightRail.reader") })).not.toBeInTheDocument();
+
+    // Act
+    await user.click(await screen.findByRole("button", { name: msg("reader.seeMore") }));
+
+    // Assert -- the tab now exists, is active, and the right rail shows the full text
+    const readerTab = await screen.findByRole("button", { name: msg("rightRail.reader") });
+    expect(readerTab).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByText(longAnswer.content.trim())).toBeInTheDocument());
+  });
 });

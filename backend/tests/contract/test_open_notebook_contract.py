@@ -140,18 +140,77 @@ async def test_add_source_link_pinned_call() -> None:
     assert seen["body"]["embed"] is True
 
 
-async def test_source_status_maps_engine_states() -> None:
-    # Arrange / Act / Assert -- each engine string collapses to our three-state model
-    for raw, expected in [
-        ("completed", "ready"),
-        ("indexed", "ready"),
-        ("failed", "failed"),
-        ("cancelled", "failed"),
-    ]:
+async def test_source_status_maps_terminal_failure_states() -> None:
+    # Arrange / Act / Assert -- terminal-failure strings map straight to "failed"; the
+    # embedded flag is never consulted for these (there is nothing to confirm).
+    for raw in ["failed", "cancelled"]:
         handler, seen = _recorder(200, {"status": raw, "message": f"command {raw}"})
         progress = await _client(handler).get_source_status(source_id="source:src_456")
-        assert progress.state == expected, raw
+        assert progress.state == "failed", raw
         assert seen["path"] == "/api/sources/source:src_456/status"
+
+
+async def test_a_terminal_success_status_is_confirmed_by_the_embedded_flag() -> None:
+    """"completed"/"indexed" is READY only once the engine confirms real content.
+
+    F2. A status string alone was not enough: the engine can report a link fetch
+    "completed" after an empty-page fetch (no Crawl4AI -- JS-rendered or login-gated
+    sites yield nothing to extract), with zero chunks ever embedded. Trusting the
+    string showed a green "ready" source with no usable content -- the same
+    silent-success shape as the earlier .docx-as-link bug, in the opposite branch.
+    """
+    for raw in ["completed", "indexed"]:
+        # Arrange -- status says done, the source record confirms real content
+
+        def handler(request: httpx.Request, raw=raw) -> httpx.Response:
+            if request.url.path.endswith("/status"):
+                return httpx.Response(200, json={"status": raw})
+            return httpx.Response(200, json={"id": "source:src_456", "embedded": True})
+
+        # Act
+        progress = await _client(handler).get_source_status(source_id="source:src_456")
+
+        # Assert
+        assert progress.state == "ready", raw
+
+
+async def test_a_terminal_success_status_with_nothing_embedded_is_failed() -> None:
+    """The exact defect this fixes: a link the engine could not really fetch."""
+
+    # Arrange -- status says "completed", but nothing was ever embedded
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/status"):
+            return httpx.Response(200, json={"status": "completed"})
+        return httpx.Response(200, json={"id": "source:src_456", "embedded": False})
+
+    # Act
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
+
+    # Assert -- FAILED, never a silent "ready"; a synthesized reason since the engine
+    # gave none, actionable enough to point at the file-upload fallback.
+    assert progress.state == "failed"
+    assert progress.detail is not None
+    assert "extracted no content" in progress.detail
+    assert "upload" in progress.detail.lower()
+
+
+async def test_a_terminal_success_status_prefers_the_engines_own_reason_if_given() -> None:
+    """When the engine DOES explain the empty result, that reason wins over ours."""
+
+    # Arrange
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path.endswith("/status"):
+            return httpx.Response(
+                200, json={"status": "completed", "message": "Page returned 0 bytes of text"}
+            )
+        return httpx.Response(200, json={"id": "source:src_456", "embedded": False})
+
+    # Act
+    progress = await _client(handler).get_source_status(source_id="source:src_456")
+
+    # Assert
+    assert progress.state == "failed"
+    assert progress.detail == "Page returned 0 bytes of text"
 
 
 async def test_ambiguous_status_falls_back_to_the_embedded_flag() -> None:

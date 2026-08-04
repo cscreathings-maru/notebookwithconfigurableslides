@@ -7,7 +7,7 @@ from datetime import datetime
 
 from sqlalchemy import func, select
 
-from ..models import ChatMessage, ChatSession
+from ..models import ChatMessage, ChatRole, ChatSession
 from ..models.base import utcnow
 from ..tenancy.repository import TenantScopedRepository
 
@@ -109,6 +109,25 @@ class ChatRepository(TenantScopedRepository[ChatMessage]):
             .all()
         )
         return list(reversed(rows))
+
+    def preceding_user_question(self, message: ChatMessage) -> str | None:
+        """The user turn a given assistant turn answered.
+
+        `ask()` always persists the user turn immediately before its assistant reply
+        in the same session, so "the latest user turn at or before this one" recovers
+        the original question. Needed by `continue_message`: the grounding search has
+        to be re-run to build a continuation prompt, and the question is not stored on
+        the assistant row itself.
+        """
+        row = self.db.execute(
+            self._scoped()
+            .where(ChatMessage.session_id == message.session_id)
+            .where(ChatMessage.role == ChatRole.user)
+            .where(ChatMessage.created_at <= message.created_at)
+            .order_by(ChatMessage.created_at.desc())
+            .limit(1)
+        ).scalar_one_or_none()
+        return row.content if row else None
 
     def count_in_session(self, session_id: uuid.UUID) -> int:
         return int(

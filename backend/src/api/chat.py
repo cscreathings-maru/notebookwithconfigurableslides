@@ -39,6 +39,7 @@ def _to_response(message: ChatMessage) -> ChatMessageResponse:
         content=message.content,
         citations=list(message.citations or []),
         created_at=message.created_at,
+        truncated=message.truncated,
     )
 
 
@@ -144,3 +145,14 @@ async def ask_chat(
         session_id=payload.session_id,
     )
     return _to_response(assistant)
+
+
+@router.post("/chat/messages/{message_id}/continue", response_model=ChatMessageResponse)
+async def continue_chat_message(
+    message_id: uuid.UUID,
+    _: Principal = Depends(require_author),
+    service: ChatService = Depends(get_chat_service),
+) -> ChatMessageResponse:
+    """Append the rest of a truncated answer, in place. 422 if it was not truncated."""
+    message = await service.continue_message(message_id)
+    return _to_response(message)

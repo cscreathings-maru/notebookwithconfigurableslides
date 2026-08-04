@@ -14,9 +14,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import Any
 
 from ..core.config import get_settings
-from ..core.errors import ValidationError
+from ..core.errors import NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..models import ChatMessage, ChatRole, ChatSession
@@ -154,7 +155,7 @@ class ChatService:
             provider_config=provider_config,
             history=history,
             temperature=0.2,
-            max_tokens=1000,
+            max_tokens=get_settings().chat_llm_max_tokens,
         )
 
         # Name the session after its opening question, but never overwrite a title the
@@ -177,14 +178,91 @@ class ChatService:
             role=ChatRole.assistant,
             content=answer.text,
             citations=_citations(snippets),
+            truncated=answer.truncated,
         )
         self.repo.add(assistant)
         self.sessions.touch(session)
         logger.info(
             "chat_answered",
-            extra={"project_id": str(project_id), "session_id": str(session.id)},
+            extra={
+                "project_id": str(project_id),
+                "session_id": str(session.id),
+                "truncated": answer.truncated,
+            },
         )
         return assistant
+
+    async def continue_message(self, message_id: uuid.UUID) -> ChatMessage:
+        """Append a continuation to a truncated assistant turn, in place.
+
+        Re-runs grounding search against the ORIGINAL question rather than reusing the
+        first answer's snippets: `history` only carries role/content pairs, so the
+        source excerpts used the first time are not recoverable from the row itself,
+        and re-searching is cheap and gives the continuation the same grounding
+        discipline as the initial answer.
+        """
+        message = self.repo.get(message_id)  # 404 across tenants
+        if message.role is not ChatRole.assistant:
+            raise ValidationError("Only an assistant message can be continued.")
+        if not message.truncated:
+            raise ValidationError("This message was not truncated.")
+
+        question = self.repo.preceding_user_question(message)
+        if question is None:
+            # Should not happen (ask() always persists the pairing), but this is a
+            # public endpoint keyed by id, so it is handled rather than asserted.
+            raise NotFoundError("Could not find the question this answer belongs to.")
+
+        project = self.project_repo.get(message.project_id)
+        language = get_settings().default_language
+        provider_config = TenantLlmConfigService(self.repo.db, self.repo.tenant_id).get_config()
+
+        snippets: list[dict] = []
+        if project.on_notebook_id:
+            allowed = SourceRepository(
+                self.repo.db, self.repo.tenant_id
+            ).engine_source_refs(project.id)
+            snippets = await self.on_client.search(allowed_source_refs=allowed, query=question)
+        grounding = _grounding_text(snippets)
+
+        answer = await self.llm.chat(
+            system=(
+                "You are continuing your own previous answer, which was cut off by a "
+                "length limit before it was finished. Continue EXACTLY where it left "
+                "off. Do not repeat anything already said, do not restart with a "
+                "greeting or a summary of what came before, and do not re-answer the "
+                "question from scratch -- pick up the sentence or list where it stops. "
+                "Answer strictly from the provided source excerpts. "
+                f"Respond in {language}."
+            ),
+            user=(
+                f"Original question: {question}\n\n"
+                f"Source excerpts:\n{grounding or '(no relevant excerpts found)'}\n\n"
+                f"Your answer so far (continue from exactly here, do not repeat it):\n"
+                f"{message.content}"
+            ),
+            provider_config=provider_config,
+            temperature=0.2,
+            max_tokens=get_settings().chat_llm_max_tokens,
+        )
+
+        # A plain concatenation: the cut usually falls on a token boundary the model
+        # continues cleanly from, and a single joining space is the safe default when
+        # it doesn't. Reconstructing the exact boundary is not worth the complexity.
+        message.content = f"{message.content} {answer.text}".strip()
+        message.citations = _merge_citations(message.citations, _citations(snippets))
+        message.truncated = answer.truncated
+        self.repo.db.add(message)
+        self.repo.db.flush()
+        self.sessions.touch(self.sessions.get(message.session_id))
+        logger.info(
+            "chat_continued",
+            extra={
+                "message_id": str(message_id),
+                "still_truncated": answer.truncated,
+            },
+        )
+        return message
 
 
 def _clean_title(title: str | None) -> str | None:
@@ -206,6 +284,19 @@ def _citations(snippets: list[dict]) -> list[dict]:
             continue
         out.append({"source_ref": s.get("source_ref"), "snippet": text[:_SNIPPET_CHARS]})
     return out
+
+
+def _merge_citations(existing: list[Any], new: list[dict]) -> list[dict]:
+    """Union by (source_ref, snippet), existing first — a continuation adds to the
+    trail rather than replacing it."""
+    seen = {(c.get("source_ref"), c.get("snippet")) for c in existing if isinstance(c, dict)}
+    merged = [c for c in existing if isinstance(c, dict)]
+    for c in new:
+        key = (c.get("source_ref"), c.get("snippet"))
+        if key not in seen:
+            seen.add(key)
+            merged.append(c)
+    return merged
 
 
 def _recent_history(messages: list[ChatMessage]) -> list[dict[str, str]]:

@@ -5,10 +5,11 @@ import { useEffect, useState } from "react";
 
 import { ChatPanel } from "@/components/project/ChatPanel";
 import { GuidePanel } from "@/components/project/GuidePanel";
+import { ReaderPanel } from "@/components/project/ReaderPanel";
 import { SourcesPanel } from "@/components/project/SourcesPanel";
 import { StudioPanel } from "@/components/project/StudioPanel";
 import { useT } from "@/lib/i18n/LocaleProvider";
-import { api, type Project } from "@/services/api";
+import { api, ApiError, type ChatMessage, type Project } from "@/services/api";
 
 export default function ProjectDetailPage({ params }: { params: { id: string } }) {
   const projectId = params.id;
@@ -17,8 +18,43 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
 
   const [mobileTab, setMobileTab] = useState<"sources" | "chat" | "right">("chat");
-  const [rightTab, setRightTab] = useState<"guide" | "studio">("guide");
+  const [rightTab, setRightTab] = useState<"guide" | "studio" | "reader">("guide");
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // F4: the message currently open in the reader tab. Owned here, not in ChatPanel,
+  // because the reader lives in the right rail while the thread lives in the centre
+  // column -- two siblings, so the shared state has to sit in their parent.
+  const [readerMessage, setReaderMessage] = useState<ChatMessage | null>(null);
+  const [readerContinuing, setReaderContinuing] = useState(false);
+  const [readerError, setReaderError] = useState<string | null>(null);
+
+  const openReader = (message: ChatMessage) => {
+    setReaderMessage(message);
+    setRightTab("reader");
+    setMobileTab("right");
+    setDrawerOpen(true);
+  };
+
+  // ChatPanel calls this after `continueChat` succeeds. Only apply it if the grown
+  // message is the one actually open here -- otherwise a continue happening while
+  // the reader shows something else would silently swap what the user is reading.
+  const refreshReaderMessage = (message: ChatMessage) => {
+    setReaderMessage((prev) => (prev && prev.id === message.id ? message : prev));
+  };
+
+  const continueReaderMessage = async () => {
+    if (!readerMessage) return;
+    setReaderContinuing(true);
+    setReaderError(null);
+    try {
+      const updated = await api.continueChat(readerMessage.id);
+      setReaderMessage(updated);
+    } catch (err) {
+      setReaderError(err instanceof ApiError ? err.message : t("chat.failed"));
+    } finally {
+      setReaderContinuing(false);
+    }
+  };
 
   useEffect(() => {
     api.getProject(projectId).then(setProject).catch(() => setProject(null));
@@ -33,12 +69,22 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
         >
           {t("rightRail.guide")}
         </button>
-        <button 
+        <button
           onClick={() => setRightTab("studio")}
           className={`flex-1 py-3.5 text-sm font-medium border-b-2 transition-colors ${rightTab === 'studio' ? 'border-accent text-accent bg-white' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
         >
           {t("rightRail.studio")}
         </button>
+        {/* Only shown once something is actually open, rather than an empty "Reader"
+            tab sitting beside two that always have content. */}
+        {readerMessage && (
+          <button
+            onClick={() => setRightTab("reader")}
+            className={`flex-1 py-3.5 text-sm font-medium border-b-2 transition-colors ${rightTab === 'reader' ? 'border-accent text-accent bg-white' : 'border-transparent text-gray-500 hover:text-gray-700 hover:bg-gray-50'}`}
+          >
+            {t("rightRail.reader")}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => setDrawerOpen(false)}
@@ -48,15 +94,27 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
         </button>
       </div>
-      <div className="flex-1 min-h-0 overflow-y-auto">
-        {rightTab === "guide" ? (
+      {/* The reader owns its own scroll region (a sticky toolbar above a scrolling
+          body); wrapping it in another `overflow-y-auto` here would be the same
+          nested-scroller mistake Studio had before Phase A. Guide and Studio still
+          flow naturally and rely on THIS div to scroll them. */}
+      <div className={`flex-1 min-h-0 ${rightTab === "reader" ? "overflow-hidden" : "overflow-y-auto"}`}>
+        {rightTab === "guide" && (
           <GuidePanel projectId={projectId} onAsk={(q) => {
             setPendingQuestion(q);
             setMobileTab("chat");
             setDrawerOpen(false);
           }} />
-        ) : (
-          <StudioPanel projectId={projectId} />
+        )}
+        {rightTab === "studio" && <StudioPanel projectId={projectId} />}
+        {rightTab === "reader" && readerMessage && (
+          <ReaderPanel
+            message={readerMessage}
+            onClose={() => setRightTab("guide")}
+            onContinue={continueReaderMessage}
+            continuing={readerContinuing}
+            error={readerError}
+          />
         )}
       </div>
     </div>
@@ -118,6 +176,8 @@ export default function ProjectDetailPage({ params }: { params: { id: string } }
               projectId={projectId}
               pendingQuestion={pendingQuestion}
               onConsumed={() => setPendingQuestion(null)}
+              onOpenReader={openReader}
+              onReaderMessageUpdated={refreshReaderMessage}
             />
           </div>
 

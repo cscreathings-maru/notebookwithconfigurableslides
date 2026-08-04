@@ -44,6 +44,17 @@ _GROUNDING_OVER_FETCH = 6
 # Engine explanations are stored on Source.error (String(1024)); keep well inside it.
 _DETAIL_MAX_CHARS = 800
 
+# Synthesized only when the engine gave no reason of its own for a "completed" command
+# that embedded nothing — e.g. a link fetch that returned an empty page because
+# Crawl4AI is off (JS-rendered / login-gated sites) and there was no article text to
+# extract. Kept short and specific enough to point at the file-upload fallback.
+_NO_CONTENT_DETAIL = (
+    "The engine finished processing but extracted no content from this source. "
+    "For links, this usually means the page is JavaScript-rendered, behind a login, "
+    "or otherwise not fetchable as a plain page — download it and upload the file "
+    "instead. For files, the format may not be supported."
+)
+
 
 @dataclass(frozen=True)
 class SourceProgress:
@@ -236,7 +247,16 @@ class OpenNotebookClient(EngineClient):
         if raw in _FAILED_STATES:
             return SourceProgress(state="failed", detail=detail)
         if raw in _READY_STATES:
-            return SourceProgress(state="ready", detail=detail)
+            # A terminal-success STRING is not enough on its own: the engine can
+            # report a link fetch "completed" after it returned an empty page (no
+            # Crawl4AI, so JS-rendered or login-gated sites yield nothing to extract),
+            # with zero chunks ever embedded. Trusting the string alone showed a green
+            # "ready" source that had no usable content — the same silent-success
+            # shape as the earlier .docx-as-link bug, in the opposite branch of this
+            # function. Ready now requires the engine to confirm real content exists.
+            if await self._is_embedded(source_id):
+                return SourceProgress(state="ready", detail=detail)
+            return SourceProgress(state="failed", detail=detail or _NO_CONTENT_DETAIL)
         # Command status is ambiguous/empty — the source's embed flag is the
         # authoritative "done" signal for our purposes.
         if await self._is_embedded(source_id):

@@ -16,7 +16,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Enum, ForeignKey, JSON, String, Text, Uuid
+from sqlalchemy import Boolean, DateTime, Enum, ForeignKey, JSON, String, Text, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, TimestampMixin, UpdatedAtMixin, UuidPkMixin
@@ -71,6 +71,12 @@ class ChatMessage(UuidPkMixin, TimestampMixin, Base):
     content: Mapped[str] = mapped_column(Text, nullable=False)
     # [{source_ref, snippet}] for assistant turns; empty for user turns.
     citations: Mapped[list[Any]] = mapped_column(JSON, default=list, nullable=False)
+    # True when the provider stopped on the token cap (finish_reason == "length"),
+    # not because the answer was actually complete. Always False for user turns.
+    # Without this, a cut-off answer rendered identically to a finished one — the
+    # provider's own signal existed and was discarded (engines/llm.py previously read
+    # only `message.content`).
+    truncated: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     def __repr__(self) -> str:  # pragma: no cover
         return f"<ChatMessage {self.role.value} session={self.session_id}>"

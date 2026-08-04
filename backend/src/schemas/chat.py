@@ -30,6 +30,9 @@ class ChatMessageResponse(BaseModel):
     content: str
     citations: list[Citation] = []
     created_at: datetime
+    # True when the provider stopped on the token cap, not because the answer was
+    # finished. Always False for user turns. The client offers "Lanjutkan" on it.
+    truncated: bool = False
 
 
 class ChatSessionCreate(BaseModel):

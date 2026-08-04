@@ -297,6 +297,9 @@ export interface ChatMessage {
   content: string;
   citations: Citation[];
   created_at: string;
+  // True when the provider stopped on the token cap, not because the answer was
+  // finished. Always false for user turns. `continueChat` appends the rest.
+  truncated: boolean;
 }
 
 /** One named thread within a project. `title` is null until the first question. */
@@ -403,6 +406,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify(sessionId ? { question, session_id: sessionId } : { question }),
     }),
+  // Appends the rest of a truncated answer, in place -- returns the SAME message id
+  // with grown content, not a new message.
+  continueChat: (messageId: string) =>
+    request<ChatMessage>(`/chat/messages/${messageId}/continue`, { method: "POST" }),
 
   // --- Chat sessions (named threads within a project) ---
   listChatSessions: (projectId: string) =>

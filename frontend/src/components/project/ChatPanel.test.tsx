@@ -34,13 +34,19 @@ const ANSWERED = [
       { source_ref: "source:b", snippet: SNIPPET_B },
     ],
     created_at: new Date().toISOString(),
+    truncated: false,
   },
 ];
 
-function renderPanel() {
+function renderPanel(props: Partial<Parameters<typeof ChatPanel>[0]> = {}) {
   return render(
     <LocaleProvider>
-      <ChatPanel projectId="p1" pendingQuestion={null} onConsumed={() => {}} />
+      <ChatPanel
+        projectId="p1"
+        pendingQuestion={null}
+        onConsumed={() => {}}
+        {...props}
+      />
     </LocaleProvider>,
   );
 }
@@ -236,5 +242,97 @@ describe("ChatPanel generation trigger", () => {
 
     // Assert
     await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+  });
+});
+
+describe("ChatPanel truncation (F1)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    stubSessions();
+  });
+
+  const TRUNCATED = [
+    {
+      id: "m-trunc",
+      role: "assistant" as const,
+      content: "Revenue grew 12% YoY, driven mainly by",
+      citations: [],
+      created_at: new Date().toISOString(),
+      truncated: true,
+    },
+  ];
+
+  it("shows the truncation notice and a continue action only when truncated", async () => {
+    // Arrange -- a complete message shows nothing
+    vi.spyOn(api, "listChat").mockResolvedValue(ANSWERED as never);
+    renderPanel();
+    await screen.findByText(ANSWERED[0].content);
+
+    // Assert
+    expect(screen.queryByText(/terpotong/i)).not.toBeInTheDocument();
+  });
+
+  it("continuing appends to the SAME bubble and clears the notice", async () => {
+    // Arrange
+    vi.spyOn(api, "listChat").mockResolvedValue(TRUNCATED as never);
+    const grown = {
+      ...TRUNCATED[0],
+      content: `${TRUNCATED[0].content} the launch of the new product line.`,
+      truncated: false,
+    };
+    const continueChat = vi.spyOn(api, "continueChat").mockResolvedValue(grown as never);
+    const user = userEvent.setup();
+    renderPanel();
+    await screen.findByText(/terpotong/i);
+
+    // Act
+    await user.click(screen.getByRole("button", { name: "Lanjutkan" }));
+
+    // Assert -- the same message id was continued, not a new one created
+    await waitFor(() => expect(continueChat).toHaveBeenCalledWith("m-trunc"));
+    expect(await screen.findByText(grown.content)).toBeInTheDocument();
+    expect(screen.queryByText(/terpotong/i)).not.toBeInTheDocument();
+  });
+});
+
+describe("ChatPanel reader (F4)", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    stubSessions();
+  });
+
+  it("collapses a long answer and opens the reader on request", async () => {
+    // Arrange -- comfortably over the 1200-char collapse threshold
+    const longAnswer = {
+      id: "m-long",
+      role: "assistant" as const,
+      content: "Ringkasan panjang. ".repeat(100),
+      citations: [],
+      created_at: new Date().toISOString(),
+      truncated: false,
+    };
+    vi.spyOn(api, "listChat").mockResolvedValue([longAnswer] as never);
+    const onOpenReader = vi.fn();
+    const user = userEvent.setup();
+    renderPanel({ onOpenReader });
+
+    // Act
+    const seeMore = await screen.findByRole("button", { name: "Lihat selengkapnya" });
+    await user.click(seeMore);
+
+    // Assert -- the FULL message (not the truncated preview) is handed to the opener
+    expect(onOpenReader).toHaveBeenCalledWith(expect.objectContaining({ id: "m-long" }));
+    const opened = onOpenReader.mock.calls[0][0];
+    expect(opened.content).toBe(longAnswer.content);
+  });
+
+  it("does not offer 'see more' for an ordinary short answer", async () => {
+    // Arrange
+    vi.spyOn(api, "listChat").mockResolvedValue(ANSWERED as never);
+    renderPanel();
+    await screen.findByText(ANSWERED[0].content);
+
+    // Assert
+    expect(screen.queryByRole("button", { name: "Lihat selengkapnya" })).not.toBeInTheDocument();
   });
 });

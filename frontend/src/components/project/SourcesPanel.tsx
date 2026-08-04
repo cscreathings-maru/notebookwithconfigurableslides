@@ -123,6 +123,17 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
             {t("sources.addUrl")}
           </button>
         </form>
+        {/* F3: documented rather than discovered after a failed ingest. Link sources
+            can only reach what a plain fetch reaches -- there is no Crawl4AI and no
+            credential path here (see revamp/PLAN-LONG-ANSWERS-AND-LINKS.md). */}
+        <p className="flex items-start gap-1.5 text-xs leading-relaxed text-gray-400">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="mt-0.5 h-3.5 w-3.5 shrink-0">
+            <circle cx="12" cy="12" r="10" />
+            <line x1="12" y1="16" x2="12" y2="12" />
+            <line x1="12" y1="8" x2="12.01" y2="8" />
+          </svg>
+          {t("sources.linkHint")}
+        </p>
       </div>
 
       {error && (
@@ -134,23 +145,33 @@ export function SourcesPanel({ projectId }: { projectId: string }) {
       <div className="flex-1 overflow-y-auto">
         <ul className="flex flex-col gap-2">
           {sources.map((s) => (
-            <li key={s.id} className="flex items-center justify-between bg-gray-50 rounded-lg p-3 group hover:bg-gray-100 transition-colors">
-              <div className="flex items-center gap-3 min-w-0 flex-1">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400 shrink-0">
-                  <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
-                  <polyline points="13 2 13 9 20 9" />
-                </svg>
-                <div className="min-w-0 flex-1">
-                  <p className="text-sm font-medium text-gray-900 truncate">{s.name}</p>
-                  <p className="text-xs text-gray-500 uppercase">{s.kind}</p>
+            <li key={s.id} className="flex flex-col gap-1.5 bg-gray-50 rounded-lg p-3 group hover:bg-gray-100 transition-colors">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-3 min-w-0 flex-1">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-4 h-4 text-gray-400 shrink-0">
+                    <path d="M13 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z" />
+                    <polyline points="13 2 13 9 20 9" />
+                  </svg>
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm font-medium text-gray-900 truncate">{s.name}</p>
+                    <p className="text-xs text-gray-500 uppercase">{s.kind}</p>
+                  </div>
+                </div>
+                <div className="flex items-center gap-1.5 ml-2 shrink-0">
+                  <div className={`w-2 h-2 rounded-full ${STATUS_STYLE[s.status]?.split(' ')[0] ?? "bg-gray-200"}`} />
+                  <span className="text-xs font-medium text-gray-600 capitalize">
+                    {t(`status.source.${s.status}` as MessageKey)}
+                  </span>
                 </div>
               </div>
-              <div className="flex items-center gap-1.5 ml-2 shrink-0">
-                <div className={`w-2 h-2 rounded-full ${STATUS_STYLE[s.status]?.split(' ')[0] ?? "bg-gray-200"}`} />
-                <span className="text-xs font-medium text-gray-600 capitalize">
-                  {t(`status.source.${s.status}` as MessageKey)}
-                </span>
-              </div>
+              {/* F2: the engine's own reason, not a generic "failed". A link the
+                  engine could not really extract now fails here instead of showing
+                  a false "ready" -- this is where that reason has to land. */}
+              {s.status === "failed" && s.error && (
+                <p className="pl-7 text-xs leading-relaxed text-red-600 break-words">
+                  {s.error}
+                </p>
+              )}
             </li>
           ))}
           {sources.length === 0 && (
