@@ -1,19 +1,20 @@
 # Truncated answers and unusable link sources — assessment & plan
 
-Status: **assessed, decisions taken, NOT started.** Written 2026-07-31 from two reports
-against the deployed stack: answers cut off mid-sentence, and a URL source that reports
-"Siap" but yields nothing.
+Status: **F1–F4 implemented and committed** (`9754a96`), **F5 (streaming) not
+started.** Written 2026-07-31 from two reports against the deployed stack: answers
+cut off mid-sentence, and a URL source that reports "Siap" but yields nothing.
 
 **Decisions (product owner, 2026-07-31):**
 
 | Question | Decision |
 |---|---|
-| Build now? | **No — plan only.** Nothing in F1–F5 is implemented. |
+| Build now? | Deferred, then authorised same day — F1–F4 built |
 | Token ceiling | **8000**, with "Lanjutkan" as the overflow path rather than a higher cap |
 | Link sources | **Fail honestly and guide to file upload.** Crawl4AI stays off; F3 descoped |
 
 These are settled; §"Open questions" below is retained only as the reasoning that led
-here, not as live questions.
+here, not as live questions. See §"Delivered" for what shipped and how it was
+verified.
 
 ---
 
@@ -218,6 +219,38 @@ conversation remains visible.
 **AC-7** *(deferred with F3's Crawl4AI scope)* Enabling Crawl4AI survives
 `docker compose up -d --force-recreate open-notebook` — i.e. TD-27 is closed rather
 than duplicated. Not in scope while Crawl4AI stays off.
+
+---
+
+## Delivered
+
+Committed `9754a96` on `revamp/phase-1`. Per-AC status:
+
+| AC | Status | How verified |
+|---|---|---|
+| AC-1 (cap raised, badge on true truncation) | ✅ | `chat_llm_max_tokens` (default 8000) replaces the hard-coded 1000; `ChatAnswer.truncated` from `finish_reason == "length"`. Integration test asserts `8000` reaches the fake provider |
+| AC-2 (Lanjutkan appends + clears) | ✅ | `POST /chat/messages/{id}/continue`; test asserts the SAME message id grows and `truncated` flips to false |
+| AC-3 (failed URL, never false "Siap") | ✅ | `get_source_status` now requires the `embedded` flag even for a "completed"/"indexed" status string. Contract test reproduces the exact defect (completed + not embedded → failed) |
+| AC-4 (reason + upload path shown) | ✅ | `SourcesPanel` now renders `source.error`; the synthesized fallback reason names the file-upload path |
+| AC-5 (link limits visible before submit) | ✅ | Persistent hint under the URL field, not a post-failure discovery |
+| AC-6 (long answers open in the rail) | ✅ | `ReaderPanel` as a third right-rail tab; integration test in `page.test.tsx` drives the actual ChatPanel→page wiring, not just ChatPanel in isolation |
+| AC-7 (Crawl4AI survives recreate) | — | Deferred; Crawl4AI stays off per the recorded decision |
+
+**Test gate:** 231 backend tests (12 new), 91 frontend tests (14 new + 1 rewritten
+suite), ruff clean, typecheck clean, lint clean. Migration `0008` run against a
+seeded pre-0007 database through upgrade and back down, re-asserting every Phase C
+invariant plus the new column. Both Docker images build; the frontend image was run
+standalone with no console errors.
+
+**Not verified:** against a live backend / the deployed VPS. The full docker-compose
+stack was not stood up in this session. Click through the real UI after deploying —
+specifically: ask a question long enough to hit the old 1000-token ceiling and
+confirm no truncation occurs; add a known-unfetchable URL and confirm it shows
+failed with a reason instead of a false "Siap"; open a long answer and confirm the
+reader tab.
+
+**Deferred, not built:** F5 (streaming) — unchanged from the original plan, still
+recommended last and separately scoped.
 
 ---
 
