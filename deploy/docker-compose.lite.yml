@@ -256,6 +256,15 @@ services:
       # which is exactly why /editor returned Next's 404 layout while assets resolved.
       - "traefik.http.services.presenton.loadbalancer.server.port=80"
       - "traefik.docker.network=notebookllm-lite_edge"
+      # DG-0: Presenton gates its own web UI with HTTP Basic Auth (same credentials
+      # as its API) -- confirmed 2026-08-05 that with routing fixed, a browser hit
+      # to /editor now reaches the app and gets a 401 challenge it has no way to
+      # answer. The credential is engine-internal defense-in-depth, not a tenant
+      # boundary, so Traefik supplies it on every request it forwards here instead
+      # of removing it -- a direct hit to the container's own (127.0.0.1-bound) port
+      # still requires it, nothing outside Traefik gains new access.
+      - "traefik.http.routers.presenton.middlewares=presenton-auth@docker"
+      - "traefik.http.middlewares.presenton-auth.headers.customrequestheaders.Authorization=Basic ${PRESENTON_BASIC_AUTH_B64}"
     networks: [edge, appnet]
     restart: always
 
