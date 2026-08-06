@@ -108,7 +108,17 @@ export interface Template {
    *  composed by the backend from the ENGINE's template id. `null` when the engine
    *  never accepted the template, so there is nothing to preview. */
   preview_url: string | null;
+  /** Slide preview images from registration (DG-3), for a picker. Empty when
+   *  registration fell back or produced none. */
+  thumbnail_urls: string[];
   created_at: string;
+}
+
+/** A template is only worth offering if it will actually change the render --
+ *  `approved` alone isn't enough: a template can be approved AND have fallen back
+ *  to the stock theme (DG-3.1, the bug StudioPanel's plain `status` filter had). */
+export function isSelectableTemplate(t: Template): boolean {
+  return t.status === "approved" && t.registration_status === "registered";
 }
 
 export interface ExtractedTokensResponse {
@@ -193,8 +203,10 @@ export interface OutlineContent {
 export interface Outline {
   id: string;
   project_id: string;
-  profile_id: string;
-  profile_version: number;
+  // Null for a freeform outline (DG-1) -- the LLM proposed structure itself,
+  // there is no StakeholderProfile pinned to this row.
+  profile_id: string | null;
+  profile_version: number | null;
   schema_version: string;
   content: OutlineContent;
   valid: boolean;
@@ -203,8 +215,6 @@ export interface Outline {
 
 export type GenerationStatus =
   | "queued"
-  | "analyzing"
-  | "building_outline"
   | "generating"
   | "validating"
   | "ready"
@@ -331,6 +341,19 @@ export interface LanguageOption {
 
 export type ContentSource = "summary" | "notebook" | "chat" | "custom";
 
+/** DG-1: the freeform (ungoverned) outline request -- same four content sources
+ *  as DeckConfig, no profile. n_slides_hint is a hint the model may not hit
+ *  exactly, not a contract the way DeckConfig.n_slides is. */
+export interface FreeformOutlineConfig {
+  content_source: ContentSource;
+  custom_markdown?: string;
+  chat_message_id?: string;
+  tone: Tone;
+  density: Verbosity;
+  n_slides_hint?: number;
+  language?: string;
+}
+
 export interface DeckConfig {
   content_source: ContentSource;
   custom_markdown?: string;
@@ -382,6 +405,13 @@ export const api = {
     request<Outline>(`/projects/${projectId}/outline`, {
       method: "POST",
       body: JSON.stringify({ profile_id: profileId }),
+    }),
+  // DG-1: same endpoint, no profile_id -- the backend routes on which field is
+  // present (api/outlines.py). "Regenerate" is just calling this again.
+  buildFreeformOutline: (projectId: string, config: FreeformOutlineConfig) =>
+    request<Outline>(`/projects/${projectId}/outline`, {
+      method: "POST",
+      body: JSON.stringify(config),
     }),
   getOutline: (id: string) => request<Outline>(`/outlines/${id}`),
   updateOutline: (id: string, content: OutlineContent) =>
@@ -437,10 +467,29 @@ export const api = {
   listLanguages: () => request<LanguageOption[]>("/languages"),
 
   // --- Generation ---
-  createGeneration: (projectId: string, outlineId: string) =>
+  // DG-2: `config` carries the knobs chosen while building the outline (tone,
+  // density, language, template) through to the actual render -- without it they
+  // would silently reset to schema defaults, since outline building and
+  // generation are separate requests. Deliberately NOT typed as DeckConfig:
+  // including `content_source` here would route this call to plain freeform
+  // instead of the outline branch (api/generations.py branches on which field
+  // is present).
+  createGeneration: (
+    projectId: string,
+    outlineId: string,
+    config?: {
+      tone?: Tone;
+      density?: Verbosity;
+      template_id?: string | null;
+      web_search?: boolean;
+      model?: string;
+      export_as?: "pptx" | "pdf";
+      language?: string;
+    },
+  ) =>
     request<Generation>(`/projects/${projectId}/generations`, {
       method: "POST",
-      body: JSON.stringify({ outline_id: outlineId }),
+      body: JSON.stringify({ outline_id: outlineId, ...config }),
     }),
   // Freeform (Studio) deck generation with per-deck config.
   generateDeck: (projectId: string, config: DeckConfig) =>
@@ -451,6 +500,12 @@ export const api = {
   getGeneration: (id: string) => request<Generation>(`/generations/${id}`),
   listGenerations: (projectId: string) =>
     request<Generation[]>(`/projects/${projectId}/generations`),
+  // DG-4: fired right before navigating to "Open in Studio". From then on this
+  // generation's own download stops being offered (server-enforced, not just
+  // hidden here) -- the stored artifact can no longer be trusted to match what
+  // editing in the studio produces (TD-24).
+  markStudioOpened: (id: string) =>
+    request<Generation>(`/generations/${id}/studio-opened`, { method: "POST" }),
   downloadGeneration: (id: string, format: "pptx" | "pdf") =>
     requestBlob(`/generations/${id}/download?format=${format}`),
   setLlmConfig: (input: {

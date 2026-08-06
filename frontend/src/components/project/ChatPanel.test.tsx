@@ -185,14 +185,30 @@ describe("ChatPanel sessions", () => {
   });
 });
 
-describe("ChatPanel generation trigger", () => {
+const FAKE_OUTLINE = {
+  id: "o1",
+  project_id: "p1",
+  profile_id: null,
+  profile_version: null,
+  schema_version: "1.0",
+  content: {
+    schema_version: "1.0",
+    sections: [{ id: "s1", title: "Ringkasan", order: 0 }],
+    talking_points: [{ section_id: "s1", text: "Poin pertama" }],
+    data_bindings: [],
+  },
+  valid: true,
+  created_at: new Date().toISOString(),
+};
+
+describe("ChatPanel generation trigger (DG-1/DG-2: outline-first)", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(api, "listChat").mockResolvedValue(ANSWERED as never);
     stubSessions();
   });
 
-  it("opens the confirmation card on the explicit /generate command", async () => {
+  it("opens the outline setup card on the explicit /generate command", async () => {
     // Arrange
     const user = userEvent.setup();
     const send = vi.spyOn(api, "sendChat");
@@ -201,16 +217,18 @@ describe("ChatPanel generation trigger", () => {
     // Act
     await user.type(screen.getByPlaceholderText(/Tanyakan tentang sumber Anda/i), "/generate{Enter}");
 
-    // Assert -- a card appears and NO message was sent
-    expect(await screen.findByRole("form", { name: "Hasilkan slide" })).toBeInTheDocument();
+    // Assert -- a card appears and NO message was sent; nothing outline/generation
+    // related fired until a deliberate click on "Buat kerangka"
+    expect(await screen.findByRole("form", { name: "Buat slide" })).toBeInTheDocument();
     expect(send).not.toHaveBeenCalled();
   });
 
-  it("never treats ordinary prose as a request to generate", async () => {
+  it("never treats ordinary prose as a request to build an outline or generate", async () => {
     // Arrange -- the exact failure mode intent detection would have: a user musing
     // about slides must not spend quota.
     const user = userEvent.setup();
-    const generate = vi.spyOn(api, "generateDeck");
+    const buildOutline = vi.spyOn(api, "buildFreeformOutline");
+    const createGeneration = vi.spyOn(api, "createGeneration");
     vi.spyOn(api, "sendChat").mockResolvedValue(ANSWERED[0] as never);
     renderPanel();
 
@@ -222,26 +240,46 @@ describe("ChatPanel generation trigger", () => {
 
     // Assert -- sent as a question; nothing billable fired, no card opened
     await waitFor(() => expect(api.sendChat).toHaveBeenCalled());
-    expect(generate).not.toHaveBeenCalled();
-    expect(screen.queryByRole("form", { name: "Hasilkan slide" })).not.toBeInTheDocument();
+    expect(buildOutline).not.toHaveBeenCalled();
+    expect(createGeneration).not.toHaveBeenCalled();
+    expect(screen.queryByRole("form", { name: "Buat slide" })).not.toBeInTheDocument();
   });
 
-  it("requires a second, deliberate click before anything is generated", async () => {
+  it("requires building and confirming an outline before anything is generated", async () => {
     // Arrange
     const user = userEvent.setup();
-    const generate = vi.spyOn(api, "generateDeck").mockResolvedValue({ id: "g1" } as never);
+    const buildOutline = vi
+      .spyOn(api, "buildFreeformOutline")
+      .mockResolvedValue(FAKE_OUTLINE as never);
+    const updateOutline = vi.spyOn(api, "updateOutline").mockResolvedValue(FAKE_OUTLINE as never);
+    const createGeneration = vi
+      .spyOn(api, "createGeneration")
+      .mockResolvedValue({ id: "g1" } as never);
     renderPanel();
 
-    // Act -- opening the card must not generate
-    await user.click(screen.getByRole("button", { name: "Hasilkan slide" }));  // the ＋ opener
-    await screen.findByRole("form", { name: "Hasilkan slide" });
-    expect(generate).not.toHaveBeenCalled();
+    // Act -- opening the card must not build or generate anything yet
+    await user.click(screen.getByRole("button", { name: "Hasilkan slide" })); // the ＋ opener
+    await screen.findByRole("form", { name: "Buat slide" });
+    expect(buildOutline).not.toHaveBeenCalled();
 
-    // Only confirming does
-    await user.click(screen.getByRole("button", { name: "Hasilkan" }));
+    // Building the outline is the first deliberate step -- cheap, reversible
+    await user.click(screen.getByRole("button", { name: "Buat kerangka" }));
+    await waitFor(() => expect(buildOutline).toHaveBeenCalledTimes(1));
+    expect(createGeneration).not.toHaveBeenCalled();
 
-    // Assert
-    await waitFor(() => expect(generate).toHaveBeenCalledTimes(1));
+    // The outline review card replaces the setup card in place
+    await screen.findByRole("form", { name: "Kerangka" });
+
+    // Only the second, deliberate confirmation actually generates
+    await user.click(screen.getByRole("button", { name: "Hasilkan dek" }));
+
+    // Assert -- the third arg carries the tone/density/language/template chosen
+    // during setup through to the actual render (DG-2); this only pins which
+    // outline and project it fired for, not every knob's default value.
+    await waitFor(() => expect(updateOutline).toHaveBeenCalledTimes(1));
+    await waitFor(() =>
+      expect(createGeneration).toHaveBeenCalledWith("p1", "o1", expect.any(Object)),
+    );
   });
 });
 

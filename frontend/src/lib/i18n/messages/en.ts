@@ -105,13 +105,29 @@ export const en = {
     "Links work for public, static pages. JavaScript-heavy sites, logins, and Office files behind a URL are not fetchable — download and upload the file instead.",
   "generate.open": "Generate slides",
   "generate.fromThis": "Generate slides from this answer",
-  "generate.title": "Generate slides",
   "generate.fromMessage": "Slides will be based on this answer.",
   "generate.fromNotebook": "Slides will be based on your notebook summary.",
-  "generate.confirm": "Generate",
-  "generate.working": "Generating…",
-  "generate.failed": "Generation failed.",
   "generate.note": "Uses your generation quota.",
+
+  // Outline-first deck builder (DG-1/DG-2)
+  "outline.setupTitle": "Build slides",
+  "outline.buildOutline": "Build outline",
+  "outline.building": "Building outline…",
+  "outline.buildFailed": "Could not build the outline.",
+  "outline.advanced": "Advanced options",
+  "outline.slidesHint": "Approximate slide count (optional)",
+  "outline.slidesHintPlaceholder": "Let the model decide",
+  "outline.reviewTitle": "Outline",
+  "outline.sectionsCount": "{n} sections",
+  "outline.noSections": "No sections yet.",
+  "outline.regenerate": "Regenerate outline",
+  "outline.regenerating": "Regenerating…",
+  "outline.confirmGenerate": "Generate deck",
+  "outline.confirming": "Generating…",
+  "outline.generateFailed": "Could not generate the deck.",
+  "outline.changeSettings": "Change settings",
+  "outline.discard": "Discard",
+  "outline.noReadySource": "Upload a source and wait for it to finish analyzing first.",
 
   // Studio
   "studio.title": "Studio — generate slides",
@@ -138,6 +154,7 @@ export const en = {
   "studio.askChatFirst": "Ask something in chat first.",
   "studio.startFailed": "Could not start generation.",
   "studio.downloadUnavailable": "Download unavailable.",
+  "studio.studioOpenedTrackingFailed": "Opened the editor, but couldn't record it — the download button may still show here until you reload.",
 
   // Tone options
   "tone.default": "default",
@@ -160,8 +177,6 @@ export const en = {
 
   // Generation status
   "status.gen.queued": "queued",
-  "status.gen.analyzing": "analyzing",
-  "status.gen.building_outline": "building outline",
   "status.gen.generating": "generating",
   "status.gen.validating": "validating",
   "status.gen.ready": "ready",

@@ -104,13 +104,29 @@ export const id: Partial<Record<MessageKey, string>> = {
     "Tautan berfungsi untuk halaman publik yang statis. Situs berbasis JavaScript, halaman berlogin, dan berkas Office di balik URL tidak dapat diambil — unduh lalu unggah berkasnya.",
   "generate.open": "Hasilkan slide",
   "generate.fromThis": "Hasilkan slide dari jawaban ini",
-  "generate.title": "Hasilkan slide",
   "generate.fromMessage": "Slide akan dibuat berdasarkan jawaban ini.",
   "generate.fromNotebook": "Slide akan dibuat berdasarkan ringkasan notebook Anda.",
-  "generate.confirm": "Hasilkan",
-  "generate.working": "Sedang membuat…",
-  "generate.failed": "Pembuatan slide gagal.",
   "generate.note": "Menggunakan kuota pembuatan Anda.",
+
+  // Pembuat dek berbasis kerangka (DG-1/DG-2)
+  "outline.setupTitle": "Buat slide",
+  "outline.buildOutline": "Buat kerangka",
+  "outline.building": "Membangun kerangka…",
+  "outline.buildFailed": "Gagal membangun kerangka.",
+  "outline.advanced": "Opsi lanjutan",
+  "outline.slidesHint": "Perkiraan jumlah slide (opsional)",
+  "outline.slidesHintPlaceholder": "Biarkan model yang menentukan",
+  "outline.reviewTitle": "Kerangka",
+  "outline.sectionsCount": "{n} bagian",
+  "outline.noSections": "Belum ada bagian.",
+  "outline.regenerate": "Buat ulang kerangka",
+  "outline.regenerating": "Membuat ulang…",
+  "outline.confirmGenerate": "Hasilkan dek",
+  "outline.confirming": "Sedang menghasilkan…",
+  "outline.generateFailed": "Gagal menghasilkan dek.",
+  "outline.changeSettings": "Ubah pengaturan",
+  "outline.discard": "Buang",
+  "outline.noReadySource": "Unggah sumber dan tunggu hingga selesai dianalisis terlebih dahulu.",
 
   // Studio
   "studio.title": "Studio — hasilkan slide",
@@ -137,6 +153,7 @@ export const id: Partial<Record<MessageKey, string>> = {
   "studio.askChatFirst": "Ajukan sesuatu di obrolan terlebih dahulu.",
   "studio.startFailed": "Tidak dapat memulai pembuatan.",
   "studio.downloadUnavailable": "Unduhan tidak tersedia.",
+  "studio.studioOpenedTrackingFailed": "Editor terbuka, tetapi gagal dicatat — tombol unduh mungkin masih muncul di sini sampai Anda memuat ulang.",
 
   // Tone options
   "tone.default": "bawaan",
@@ -159,8 +176,6 @@ export const id: Partial<Record<MessageKey, string>> = {
 
   // Generation status
   "status.gen.queued": "antre",
-  "status.gen.analyzing": "menganalisis",
-  "status.gen.building_outline": "menyusun kerangka",
   "status.gen.generating": "menghasilkan",
   "status.gen.validating": "memvalidasi",
   "status.gen.ready": "siap",

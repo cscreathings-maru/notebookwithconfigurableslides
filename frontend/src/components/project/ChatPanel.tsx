@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ChatSessionBar } from "@/components/project/ChatSessionBar";
-import { GenerateCard } from "@/components/project/GenerateCard";
+import { OutlineBuilderCard } from "@/components/project/OutlineBuilderCard";
 import { Markdown } from "@/components/ui/Markdown";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type ChatMessage, type ChatSession } from "@/services/api";
@@ -464,7 +464,7 @@ export function ChatPanel({
 
         {generateFor && (
           <div className="mb-3">
-            <GenerateCard
+            <OutlineBuilderCard
               projectId={projectId}
               chatMessageId={generateFor.messageId}
               onCancel={() => setGenerateFor(null)}

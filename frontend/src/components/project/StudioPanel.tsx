@@ -10,6 +10,7 @@ import type { MessageKey } from "@/lib/i18n/messages/en";
 import {
   api,
   ApiError,
+  isSelectableTemplate,
   type ContentSource,
   type DeckConfig,
   type Generation,
@@ -69,7 +70,10 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   }, [projectId]);
 
   useEffect(() => {
-    api.listTemplates().then((t) => setTemplates(t.filter((x) => x.status === "approved"))).catch(() => {});
+    // DG-3.1: "approved" alone isn't enough -- a template can be approved AND have
+    // fallen back to the stock theme, which used to show up here as a choice that
+    // silently changed nothing.
+    api.listTemplates().then((t) => setTemplates(t.filter(isSelectableTemplate))).catch(() => {});
     api
       .listModels()
       .then((m) => {
@@ -355,6 +359,14 @@ export function StudioPanel({ projectId }: { projectId: string }) {
                       onClick={() => {
                         setActiveEditor({ id: g.id, url: g.editor_url! });
                         setEditorOpen(true);
+                        // DG-4: from this point NoteAI's own download stops being
+                        // offered for this generation (server-enforced; this call
+                        // just gets the UI to reflect it without a reload). Fired
+                        // after opening, not blocking it -- editing is the
+                        // primary action, this is bookkeeping around it.
+                        api.markStudioOpened(g.id).then(loadDecks).catch(() => {
+                          setError(t("studio.studioOpenedTrackingFailed"));
+                        });
                       }}
                       className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7 border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300"
                       title="Open interactive drag-and-edit slide canvas in Presenton"

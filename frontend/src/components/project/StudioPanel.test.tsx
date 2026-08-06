@@ -28,6 +28,11 @@ const READY_DECK = {
   created_at: new Date().toISOString(),
 };
 
+const READY_DECK_WITH_EDITOR = {
+  ...READY_DECK,
+  editor_url: "/editor/presentation?id=pres-1",
+};
+
 function stubApi(overrides: Partial<typeof api> = {}) {
   vi.spyOn(api, "listGenerations").mockResolvedValue([READY_DECK] as never);
   vi.spyOn(api, "listTemplates").mockResolvedValue([] as never);
@@ -115,5 +120,51 @@ describe("deck download", () => {
 
     // Assert
     await waitFor(() => expect(saveBlob).not.toHaveBeenCalled());
+  });
+});
+
+describe("DG-4: studio-opened download cutover", () => {
+  it("records the open and hides the download buttons once the backend confirms it", async () => {
+    // Arrange -- the backend reports artifacts as no longer available once
+    // studio-opened is recorded; the panel reloads the list to reflect it.
+    vi.spyOn(api, "listGenerations")
+      .mockResolvedValueOnce([READY_DECK_WITH_EDITOR] as never)
+      .mockResolvedValueOnce([
+        { ...READY_DECK_WITH_EDITOR, artifacts: { pptx: false, pdf: false } },
+      ] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([] as never);
+    vi.spyOn(api, "listModels").mockResolvedValue([] as never);
+    const markOpened = vi
+      .spyOn(api, "markStudioOpened")
+      .mockResolvedValue({ ...READY_DECK_WITH_EDITOR, artifacts: { pptx: false, pdf: false } } as never);
+
+    // Act
+    renderPanel();
+    const editorButton = await screen.findByRole("button", { name: /Editor/ });
+    await userEvent.click(editorButton);
+
+    // Assert
+    await waitFor(() => expect(markOpened).toHaveBeenCalledWith("gen-1"));
+    await waitFor(() =>
+      expect(screen.queryByRole("button", { name: /PPTX/ })).not.toBeInTheDocument(),
+    );
+  });
+
+  it("still opens the editor even if recording the open fails", async () => {
+    // Arrange -- opening the editor is the primary action; tracking failure is
+    // a secondary concern that must not block it.
+    stubApi();
+    vi.spyOn(api, "listGenerations").mockResolvedValue([READY_DECK_WITH_EDITOR] as never);
+    vi.spyOn(api, "markStudioOpened").mockRejectedValue(new Error("network"));
+
+    // Act
+    renderPanel();
+    const editorButton = await screen.findByRole("button", { name: /Editor/ });
+    await userEvent.click(editorButton);
+
+    // Assert -- the modal opens regardless (its title text renders)
+    await waitFor(() =>
+      expect(screen.getByText(/Interactive Presentation Slide Editor/)).toBeInTheDocument(),
+    );
   });
 });
