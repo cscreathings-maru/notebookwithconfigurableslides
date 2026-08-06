@@ -59,6 +59,7 @@ def _to_response(t: Template) -> TemplateResponse:
         registration_status=t.registration_status,
         registration_error=t.registration_error,
         preview_url=_preview_url(t),
+        thumbnail_urls=t.slide_image_urls,
         created_at=t.created_at,
     )
 

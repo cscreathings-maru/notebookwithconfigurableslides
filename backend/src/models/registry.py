@@ -86,6 +86,11 @@ class Template(UuidPkMixin, Base):
     presenton_template_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_pptx_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     brand_tokens: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    # Slide preview images the engine returns at registration time (DG-3). Same-
+    # origin paths under the already-allowlisted /app_data prefix for a self-hosted
+    # engine (see engines/presenton.py's module docstring on response shapes) --
+    # servable directly, not engine-internal in the way presenton_template_ref is.
+    slide_image_urls: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     status: Mapped[RegistryStatus] = mapped_column(
         Enum(RegistryStatus, name="template_status"),
         default=RegistryStatus.draft,

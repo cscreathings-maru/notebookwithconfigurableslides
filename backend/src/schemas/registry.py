@@ -68,6 +68,10 @@ class TemplateResponse(BaseModel):
     # when there is nothing to preview -- the engine never accepted it. A URL, not the
     # engine's template id, for the same reason as `Generation.editor_url` (T-1.2).
     preview_url: str | None
+    # Slide preview images from registration (DG-3), for a template picker. Same-origin
+    # paths already safe to expose -- unlike presenton_template_ref, these were never
+    # engine-internal, only unused.
+    thumbnail_urls: list[str]
     created_at: datetime
 
 

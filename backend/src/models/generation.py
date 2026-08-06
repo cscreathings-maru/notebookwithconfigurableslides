@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import Enum, ForeignKey, Integer, JSON, String, Uuid
+from sqlalchemy import DateTime, Enum, ForeignKey, Integer, JSON, String, Uuid
 from sqlalchemy.orm import Mapped, mapped_column
 
 from .base import Base, UuidPkMixin, utcnow
@@ -20,8 +20,6 @@ from .base import Base, UuidPkMixin, utcnow
 
 class GenerationStatus(str, enum.Enum):
     queued = "queued"
-    analyzing = "analyzing"
-    building_outline = "building_outline"
     generating = "generating"
     validating = "validating"
     ready = "ready"
@@ -65,6 +63,15 @@ class Generation(UuidPkMixin, Base):
 
     consistency_report: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(String(2000), nullable=True)
+
+    # DG-4: set once "Open in Studio" is clicked. From then on NoteAI stops
+    # offering its own download for this generation -- the stored artifact is
+    # produced once, at generation time, and an edit in the studio updates only
+    # the engine's own copy (TD-24). Null means "never opened; the stored
+    # artifact is still the whole truth."
+    studio_opened_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
 
     status: Mapped[GenerationStatus] = mapped_column(
         Enum(GenerationStatus, name="generation_status"),

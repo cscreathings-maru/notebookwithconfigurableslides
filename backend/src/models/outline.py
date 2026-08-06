@@ -21,9 +21,11 @@ class Outline(UuidPkMixin, Base):
     project_id: Mapped[uuid.UUID] = mapped_column(
         Uuid(as_uuid=True), ForeignKey("project.id"), nullable=False, index=True
     )
-    # Pinned profile (logical id + version) used to build this outline.
-    profile_id: Mapped[uuid.UUID] = mapped_column(Uuid(as_uuid=True), nullable=False)
-    profile_version: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Pinned profile (logical id + version) used to build this outline. Null for a
+    # freeform outline (DG-1) -- the LLM proposes structure itself, there is no
+    # profile to pin. Mirrors Generation.profile_id, nullable for the same reason.
+    profile_id: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+    profile_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
     schema_version: Mapped[str] = mapped_column(String(16), nullable=False)
     content: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False)
     valid: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)

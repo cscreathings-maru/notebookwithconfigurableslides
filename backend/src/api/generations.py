@@ -21,6 +21,8 @@ from ..generation.freeform_service import FreeformGenerationService
 from ..generation.repository import GenerationRepository
 from ..generation.service import GenerationService
 from ..models import Generation, GenerationStatus
+from ..models.base import utcnow
+from ..outline.repository import OutlineRepository
 from ..schemas.generation import (
     ArtifactAvailability,
     GenerationCreate,
@@ -33,6 +35,7 @@ from .deps import (
     get_generation_repository,
     get_generation_service,
     get_object_store,
+    get_outline_repository,
 )
 
 router = APIRouter(tags=["generations"])
@@ -84,6 +87,18 @@ def _editor_url(g: Generation) -> str | None:
     return f"{_EDITOR_BASE_PATH}/presentation?id={quote(str(g.presenton_presentation_id))}"
 
 
+def _artifacts(g: Generation) -> ArtifactAvailability:
+    # DG-4: once the studio has been opened, the stored artifact can no longer be
+    # trusted to match what the user sees there -- editing there updates only the
+    # engine's own copy (TD-24). Reporting it as still downloadable would be
+    # exactly the silent-wrong-answer shape this codebase has a standing rule
+    # against, so it stops being offered rather than staying technically present
+    # but stale.
+    if g.studio_opened_at is not None:
+        return ArtifactAvailability(pptx=False, pdf=False)
+    return ArtifactAvailability(pptx=bool(g.pptx_uri), pdf=bool(g.pdf_uri))
+
+
 def _to_response(g: Generation) -> GenerationResponse:
     return GenerationResponse(
         id=g.id,
@@ -97,7 +112,7 @@ def _to_response(g: Generation) -> GenerationResponse:
         params=_public_params(g.params),
         source_ids=g.source_ids or [],
         consistency_report=g.consistency_report,
-        artifacts=ArtifactAvailability(pptx=bool(g.pptx_uri), pdf=bool(g.pdf_uri)),
+        artifacts=_artifacts(g),
         editor_url=_editor_url(g),
         error=g.error,
         created_by=g.created_by,
@@ -116,19 +131,33 @@ async def create_generation(
     principal: Principal = Depends(require_author),
     service: GenerationService = Depends(get_generation_service),
     freeform_service: FreeformGenerationService = Depends(get_freeform_generation_service),
+    outline_repo: OutlineRepository = Depends(get_outline_repository),
 ) -> GenerationResponse:
-    # Freeform (NotebookLM Studio) path when a content source is chosen; otherwise
-    # the governed outline path.
+    # Three branches on one endpoint -- kept in one place for the reason
+    # docs/ARCHITECTURE.md §3 names this endpoint as the codebase's recurring
+    # divergence point: content_source selects freeform outright; outline_id is
+    # then split on whether the referenced Outline is governed (has a pinned
+    # profile) or freeform (DG-1's ungoverned outline, profile_id is None) --
+    # the latter generates through the freeform service too (DG-2), not a third.
     if payload.content_source is not None:
         generation = await freeform_service.create(
             project_id=project_id, payload=payload, created_by=principal.user_id
         )
     elif payload.outline_id is not None:
-        generation = await service.create(
-            project_id=project_id,
-            outline_id=payload.outline_id,
-            created_by=principal.user_id,
-        )
+        outline = outline_repo.get(payload.outline_id)  # 404 across tenants
+        if outline.profile_id is not None:
+            generation = await service.create(
+                project_id=project_id,
+                outline_id=payload.outline_id,
+                created_by=principal.user_id,
+            )
+        else:
+            generation = await freeform_service.create_from_outline(
+                project_id=project_id,
+                outline=outline,
+                payload=payload,
+                created_by=principal.user_id,
+            )
     else:
         raise ValidationError("Provide either content_source (freeform) or outline_id.")
     return _to_response(generation)
@@ -152,6 +181,28 @@ def get_generation(
     return _to_response(repo.get(generation_id))
 
 
+@router.post("/generations/{generation_id}/studio-opened", response_model=GenerationResponse)
+def mark_studio_opened(
+    generation_id: uuid.UUID,
+    _: Principal = Depends(require_author),
+    repo: GenerationRepository = Depends(get_generation_repository),
+) -> GenerationResponse:
+    """DG-4: the frontend calls this right before navigating to "Open in Studio".
+
+    Idempotent -- a generation whose studio was already opened keeps its original
+    timestamp rather than sliding forward on every subsequent open. `require_author`
+    (not `require_viewer`, the bar `get_generation`/`download_generation` use): this
+    has a real consequence for every viewer of this generation, not just the caller,
+    so it takes the same authority level as creating the generation did.
+    """
+    generation = repo.get(generation_id)
+    if generation.studio_opened_at is None:
+        generation.studio_opened_at = utcnow()
+        repo.db.add(generation)
+        repo.db.flush()
+    return _to_response(generation)
+
+
 @router.get("/generations/{generation_id}/download")
 def download_generation(
     generation_id: uuid.UUID,
@@ -168,6 +219,16 @@ def download_generation(
     generation = repo.get(generation_id)
     if generation.status is not GenerationStatus.ready:
         raise ValidationError("Generation is not ready for download.")
+    if generation.studio_opened_at is not None:
+        # DG-4 (Q6, Option C): enforced here too, not just by hiding the button --
+        # a stale stored artifact behind a still-live endpoint is exactly the
+        # silent-wrong-answer shape TD-24 described. The client-side hide is a
+        # convenience; this is the guarantee.
+        raise ValidationError(
+            "This deck has been opened for editing in the studio; download it from "
+            "there instead — the copy stored here may be out of date.",
+            code="edited_in_studio",
+        )
 
     key = generation.pptx_uri if fmt == "pptx" else generation.pdf_uri
     if not key:

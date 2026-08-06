@@ -14,7 +14,7 @@ endpoint, so callers pick the format up front.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from ..core.config import get_settings
@@ -44,6 +44,11 @@ class TemplateRegistration:
     ref: str
     status: RegistrationStatus
     error: str | None
+    # Slide preview images the engine returned at the preview step (DG-3), empty
+    # when there was no successful preview to draw them from. Carried here rather
+    # than fetched separately -- the engine only produces them as a side effect of
+    # the same call that yields `ref`.
+    slide_image_urls: list[str] = field(default_factory=list)
 
     @classmethod
     def fallen_back(cls, error: str) -> TemplateRegistration:
@@ -189,7 +194,10 @@ class PresentonClient(EngineClient):
                 logger.warning("presenton_template_init_no_ref", extra={"name": name})
                 return TemplateRegistration.fallen_back(detail)
             return TemplateRegistration(
-                ref=str(ref), status=RegistrationStatus.registered, error=None
+                ref=str(ref),
+                status=RegistrationStatus.registered,
+                error=None,
+                slide_image_urls=[str(u) for u in slide_image_urls if u],
             )
         except Exception as exc:
             detail = f"{type(exc).__name__}: {exc}"

@@ -20,11 +20,16 @@ def _instructions(profile: StakeholderProfile) -> str:
     return str(cfg)
 
 
-def _slides_markdown(outline: OutlineContent) -> list[str]:
+def slides_markdown_from_outline(outline: OutlineContent) -> list[str]:
     """One markdown block per section (in order), bullets = talking points.
 
     Presenton's `slides_markdown` is a string[] — one entry per slide — so the
     engine renders the fixed sections in order rather than re-inventing structure.
+
+    Public (not `_`-prefixed): shared with the freeform-from-outline generation path
+    (DG-2, `generation/freeform_service.py`) so a confirmed outline's structure is
+    fixed the same way here as it is for the governed path -- one implementation of
+    "outline -> slides_markdown", not two that can drift.
     """
     points_by_section: dict[str, list[str]] = {}
     for tp in outline.talking_points:
@@ -55,7 +60,7 @@ def build_presenton_request(
 ) -> dict[str, Any]:
     return {
         "content": _content_brief(profile, outline),
-        "slides_markdown": _slides_markdown(outline),
+        "slides_markdown": slides_markdown_from_outline(outline),
         "instructions": _instructions(profile),
         "tone": profile.tone.value,
         "verbosity": profile.verbosity.value,

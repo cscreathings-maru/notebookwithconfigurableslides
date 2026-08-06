@@ -23,7 +23,7 @@ import httpx
 from ..core.config import get_settings
 from ..core.errors import EngineError
 from ..core.logging import get_logger
-from ..outline.builder import LlmResult
+from ..outline.builder import FreeformOutlineLlmResult, LlmResult
 from .base import EngineClient
 
 logger = get_logger("orchestrator.llm")
@@ -148,6 +148,49 @@ class LlmClient(EngineClient):
             tokens_out=int(usage.get("completion_tokens", 0)),
         )
 
+    async def draft_outline(
+        self,
+        *,
+        content: str,
+        tone: str,
+        density: str,
+        n_slides_hint: int | None,
+        language: str,
+        provider_config: dict[str, Any],
+    ) -> FreeformOutlineLlmResult:
+        """One call: propose outline structure AND wording (DG-1's freeform path).
+
+        Unlike `talking_points`, there are no fixed section ids to fill in -- the
+        model returns its own titles, so the parse has to tolerate a shape it did
+        not get to negotiate (missing/blank titles, a non-list `bullets`) rather
+        than assume compliance the way the governed prompt can.
+        """
+        settings = get_settings()
+        body = await self._complete(
+            messages=_build_freeform_outline_messages(
+                content, tone, density, n_slides_hint, language
+            ),
+            provider_config=provider_config,
+            temperature=settings.outline_llm_temperature,
+            max_tokens=settings.outline_llm_max_tokens,
+            response_format={"type": "json_object"},
+        )
+        try:
+            raw = body["choices"][0]["message"]["content"]
+            data = json.loads(raw)
+            raw_sections = data["sections"]
+            if not isinstance(raw_sections, list):
+                raise TypeError("`sections` must be a list")
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise EngineError("LLM returned an unparseable outline draft.") from exc
+
+        usage = body.get("usage", {})
+        return FreeformOutlineLlmResult(
+            sections=[s for s in raw_sections if isinstance(s, dict)],
+            tokens_in=int(usage.get("prompt_tokens", 0)),
+            tokens_out=int(usage.get("completion_tokens", 0)),
+        )
+
     async def chat(
         self,
         *,
@@ -204,6 +247,31 @@ def _build_messages(
         f"Grounding facts:\n{grounding}\n\n"
         'Return JSON like {"section_id": ["point", ...], ...} for exactly these ids.'
     )
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _build_freeform_outline_messages(
+    content: str,
+    tone: str,
+    density: str,
+    n_slides_hint: int | None,
+    language: str,
+) -> list[dict[str, str]]:
+    target = (
+        f"Aim for roughly {n_slides_hint} sections."
+        if n_slides_hint
+        else "Choose the number of sections the content actually supports -- "
+        "typically between 4 and 12. Do not pad or truncate to hit a round number."
+    )
+    system = (
+        "You draft a presentation outline directly from source material. There is "
+        "no fixed structure to fill in -- propose the sections yourself, in the "
+        f"order they should appear. {target} "
+        f"Tone: {tone}. Verbosity: {density}. Write in {language}. "
+        'Return STRICT JSON: {"sections": [{"title": str, "bullets": [str, ...]}, ...]}. '
+        "No prose outside the JSON."
+    )
+    user = f"Source material:\n{content}\n\nReturn the JSON outline."
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
 

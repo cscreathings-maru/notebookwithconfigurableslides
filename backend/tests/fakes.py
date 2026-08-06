@@ -163,6 +163,25 @@ class FakeLlm:
         points = {sid: [f"point {sid} run{self._call}"] for sid in section_ids}
         return LlmResult(points_by_section=points, tokens_in=120, tokens_out=80)
 
+    async def draft_outline(
+        self, *, content, tone, density, n_slides_hint, language, provider_config
+    ):
+        """Deterministic-shape freeform draft: splits the content into one section
+        per non-empty paragraph (or a single section if there's only one), so a
+        test can assert structure without depending on real LLM output."""
+        from src.outline.builder import FreeformOutlineLlmResult
+
+        self._call += 1
+        self.calls.append("draft_outline")
+        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()]
+        if not paragraphs:
+            paragraphs = [content.strip()] if content.strip() else []
+        sections = [
+            {"title": f"Section {i + 1} run{self._call}", "bullets": [p[:80]]}
+            for i, p in enumerate(paragraphs)
+        ]
+        return FreeformOutlineLlmResult(sections=sections, tokens_in=90, tokens_out=60)
+
     async def chat(
         self,
         *,
@@ -280,6 +299,7 @@ class FakePresenton:
             ref=f"{self.ref_prefix}_{name}",
             status=RegistrationStatus.registered,
             error=None,
+            slide_image_urls=[f"/app_data/{name}-slide-1.png", f"/app_data/{name}-slide-2.png"],
         )
 
     async def generate(self, *, params: dict[str, Any]) -> dict[str, Any]:

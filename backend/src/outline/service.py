@@ -10,14 +10,18 @@ from __future__ import annotations
 import uuid
 from typing import Any
 
+from ..chat.repository import ChatRepository
+from ..content.resolver import resolve_freeform_content
+from ..core.config import get_settings
 from ..core.errors import ValidationError
 from ..core.logging import get_logger
+from ..guide.repository import GuideRepository
 from ..ingestion.repository import ProjectRepository, SourceRepository
 from ..metering.service import MeteringService
 from ..models import Outline
 from ..registry.repository import ProfileRepository
 from ..tenancy.llm_config import TenantLlmConfigService
-from .builder import build_outline
+from .builder import build_freeform_outline, build_outline
 from .repository import OutlineRepository
 from .schema import OutlineContent
 from .validator import repair_outline, validate_outline
@@ -85,6 +89,83 @@ class OutlineService:
             tokens_out=usage.tokens_out,
         )
         logger.info("outline_built", extra={"outline_id": str(outline.id)})
+        return outline
+
+    async def build_freeform(
+        self,
+        *,
+        project_id: uuid.UUID,
+        content_source: str,
+        custom_markdown: str | None,
+        chat_message_id: uuid.UUID | None,
+        tone: str,
+        density: str,
+        n_slides_hint: int | None,
+        language: str | None,
+        created_by: uuid.UUID,
+    ) -> Outline:
+        """Ungoverned outline (DG-1): no profile, LLM proposes structure itself.
+
+        Same four content sources as freeform generation (`resolve_freeform_content`,
+        shared with `FreeformGenerationService` so the two never drift on what each
+        choice means), then one LLM call for structure + wording
+        (`build_freeform_outline`). Persisted with `profile_id=None` -- the marker
+        `generation/worker.py` already uses to skip the consistency gate for
+        freeform generations applies here too, once a generation is built from this
+        outline (DG-2).
+        """
+        project = self.project_repo.get(project_id)
+        provider_config = TenantLlmConfigService(self.repo.db, self._tenant_id).get_config()
+        resolved_language = language or get_settings().default_language
+
+        content = await resolve_freeform_content(
+            project=project,
+            content_source=content_source,
+            custom_markdown=custom_markdown,
+            chat_message_id=chat_message_id,
+            provider_config=provider_config,
+            model=provider_config.get("model"),
+            language=resolved_language,
+            guide_repo=GuideRepository(self.repo.db, self._tenant_id),
+            chat_repo=ChatRepository(self.repo.db, self._tenant_id),
+            source_repo=SourceRepository(self.repo.db, self._tenant_id),
+            on_client=self.on_client,
+            llm=self.llm,
+        )
+
+        outline_content, usage = await build_freeform_outline(
+            content=content,
+            tone=tone,
+            density=density,
+            n_slides_hint=n_slides_hint,
+            language=resolved_language,
+            llm=self.llm,
+            provider_config=provider_config,
+        )
+
+        outline = Outline(
+            project_id=project.id,
+            profile_id=None,
+            profile_version=None,
+            schema_version=outline_content.schema_version,
+            content=outline_content.model_dump(),
+            valid=True,
+        )
+        self.repo.add(outline)
+
+        MeteringService(self.repo.db, self._tenant_id).record(
+            action="outline.created",
+            resource={
+                "outline_id": str(outline.id),
+                "project_id": str(project.id),
+                "path": "freeform",
+                "content_source": content_source,
+            },
+            actor_user_id=created_by,
+            tokens_in=usage.tokens_in,
+            tokens_out=usage.tokens_out,
+        )
+        logger.info("freeform_outline_built", extra={"outline_id": str(outline.id)})
         return outline
 
     def get(self, outline_id: uuid.UUID) -> Outline:

@@ -109,6 +109,7 @@ class TemplateService:
             status=RegistryStatus.draft,
             registration_status=registration.status,
             registration_error=registration.error,
+            slide_image_urls=registration.slide_image_urls,
             created_by=created_by,
         )
         self.repo.add(template)
@@ -161,6 +162,10 @@ class TemplateService:
         latest.presenton_template_ref = registration.ref
         latest.registration_status = registration.status
         latest.registration_error = registration.error
+        # A reregister is often run specifically to repair a broken registration
+        # (T-1.6) -- refresh the thumbnails too rather than leaving stale/empty
+        # ones from the first attempt.
+        latest.slide_image_urls = registration.slide_image_urls
         self.repo.db.add(latest)
         self.repo.db.flush()
         self._audit("template.reregistered", latest, actor_user_id)

@@ -54,7 +54,10 @@ def build_freeform_request(
     export_as: str,
     language: str = DEFAULT_LANGUAGE,
     instructions: str | None = None,
+    slides_markdown: list[str] | None = None,
 ) -> dict[str, Any]:
+    """`slides_markdown`, when given, wins outright (DG-2: a confirmed outline's
+    structure is already fixed -- nothing here should re-derive or re-split it)."""
     params: dict[str, Any] = {
         "content": content,
         "n_slides": n_slides,
@@ -66,8 +69,10 @@ def build_freeform_request(
         "include_title_slide": True,
         "include_table_of_contents": False,
     }
+    if slides_markdown is not None:
+        params["slides_markdown"] = slides_markdown
     # Custom markdown drives slide structure directly (one entry per slide).
-    if content_source == "custom":
+    elif content_source == "custom":
         params["slides_markdown"] = split_custom_slides(content)
     # Presenton defaults template to "general"; only override when we have a ref.
     if template_ref:
