@@ -3,11 +3,13 @@
 import { useT } from "@/lib/i18n/LocaleProvider";
 import type { RegistrationStatus } from "@/services/api";
 
-/** Warns when a template's branding will not reach the renderer.
+/** Reports a template's registration outcome (TM-3: four distinct states, not one
+ *  `fallback` that made "still working" and "the engine rejected it" look the same).
  *
- *  Renders nothing for a healthy registration -- the absence of a warning is the
- *  signal. A `fallback` template still generates decks, just with the engine's stock
- *  theme, which is exactly the failure users previously could not see. */
+ *  Renders nothing for a healthy registration -- the absence of a badge is the
+ *  signal. `no_source`/`failed` templates still exist as rows, just without a
+ *  usable engine template behind them, which is exactly the failure users
+ *  previously could not see. */
 export function RegistrationBadge({
   status,
   error,
@@ -18,10 +20,26 @@ export function RegistrationBadge({
   const t = useT();
   if (status === "registered") return null;
 
+  if (status === "pending") {
+    return (
+      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md text-xs font-medium border bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 border-blue-200/60 dark:border-blue-800/60">
+        <svg viewBox="0 0 24 24" fill="none" className="w-3.5 h-3.5 shrink-0 animate-spin">
+          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" />
+          <path
+            className="opacity-75"
+            fill="currentColor"
+            d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"
+          />
+        </svg>
+        {t("templates.registrationPending")}
+      </span>
+    );
+  }
+
   const isFailed = status === "failed";
   const tone = isFailed
     ? "bg-red-50 dark:bg-red-950/60 text-red-700 dark:text-red-300 border-red-200/60 dark:border-red-800/60"
-    : "bg-amber-50 dark:bg-amber-950/60 text-amber-800 dark:text-amber-300 border-amber-200/60 dark:border-amber-800/60";
+    : "bg-gray-50 dark:bg-gray-900/60 text-gray-600 dark:text-gray-400 border-gray-200/60 dark:border-gray-700/60";
 
   return (
     <span
@@ -33,7 +51,7 @@ export function RegistrationBadge({
         <line x1="12" y1="9" x2="12" y2="13" />
         <line x1="12" y1="17" x2="12.01" y2="17" />
       </svg>
-      {t(isFailed ? "templates.registrationFailed" : "templates.registrationFallback")}
+      {t(isFailed ? "templates.registrationFailed" : "templates.registrationNoSource")}
     </span>
   );
 }

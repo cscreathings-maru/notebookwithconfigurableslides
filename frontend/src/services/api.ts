@@ -91,9 +91,15 @@ export type Tone =
   | "sales_pitch";
 export type Verbosity = "concise" | "standard" | "text-heavy";
 
-/** Whether the slide engine accepted this template. `fallback` means decks render
- *  with the engine's stock theme, not the uploaded branding. */
-export type RegistrationStatus = "registered" | "fallback" | "failed";
+/** Whether the slide engine accepted this template (TM-3). Four distinct states,
+ *  previously collapsed into one `fallback` value that made "still working" and
+ *  "the engine rejected it" look identical:
+ *  - `pending`: registration queued or in flight (TM-2: async, not inline).
+ *  - `registered`: usable -- decks render with the uploaded branding.
+ *  - `no_source`: no PPTX was uploaded. Not an error, nothing to retry.
+ *  - `failed`: the engine rejected the deck or was unreachable; `registration_error`
+ *    carries the reason. */
+export type RegistrationStatus = "pending" | "registered" | "no_source" | "failed";
 
 export interface Template {
   id: string;
@@ -521,6 +527,8 @@ export const api = {
 
   // --- Templates ---
   listTemplates: () => request<Template[]>("/templates"),
+  // TM-2: returns immediately with registration_status "pending" -- registration
+  // is an async engine-side job now, not run inline in this request.
   createTemplate: (input: { name: string; brand_tokens: Record<string, unknown>; pptx?: File | null }) => {
     const form = new FormData();
     form.set("name", input.name);
@@ -533,12 +541,14 @@ export const api = {
     form.set("file", file);
     return request<ExtractedTokensResponse>("/templates/extract-tokens", { method: "POST", body: form });
   },
-  approveTemplate: (id: string) =>
-    request<Template>(`/templates/${id}/approve`, { method: "POST" }),
   /** Retry engine registration from the template's already-stored PPTX. Repairs
-   *  templates whose registration failed; no re-upload needed. */
+   *  templates whose registration failed; no re-upload needed. Also async (TM-2):
+   *  returns with registration_status reset to "pending". */
   reregisterTemplate: (id: string) =>
     request<Template>(`/templates/${id}/reregister`, { method: "POST" }),
+  // TM-5. Refuses (409) if a Generation still pins any version of this template.
+  deleteTemplate: (id: string) =>
+    request<void>(`/templates/${id}`, { method: "DELETE" }),
 
   // --- Profiles ---
   listProfiles: () => request<Profile[]>("/profiles"),
