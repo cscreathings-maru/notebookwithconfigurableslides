@@ -7,7 +7,8 @@ that proves it is still open and the check that will prove it closed.
 **Status legend:** `BLOCKED` — cannot proceed in any environment reachable today ·
 `OPEN` — actionable now · `DEFERRED` — actionable, scheduled for a named later phase.
 
-Last reconciled: **2026-07-31** (post workspace Phases A–D; ingestion and RAG grounding fixed).
+Last reconciled: **2026-08-06** (post DG-0–DG-5 deck-generation revamp; template-registration
+root cause found and filed as TD-32–TD-35).
 
 ---
 
@@ -48,6 +49,15 @@ upstream provenance — still unblocks the rest.
 > **No longer blocked:** the source is on the VPS and the theming contract is known —
 > `POST /api/v1/ppt/themes` taking `{name, description, company_name, logo, logo_url, data}`
 > (read from `api/v1/ppt/endpoints/theme.py` in the published image).
+>
+> **Update 2026-08-06.** The theme API was confirmed present on the *running* engine —
+> `/themes/create`, `/themes/all`, `/themes/default`, `/themes/update/{id}`,
+> `/themes/delete/{id}`, `/theme/generate`. So TD-07 is **not impossible, only unbuilt**:
+> the "the uploaded PPTX *is* the brand" reasoning in `engines/presenton.py` is correct
+> about the *template* API and says nothing about the *theme* API. Deferred by product
+> decision (hide the configurator for now — `TM-6`), not by blocker. Two open questions
+> recorded in [`PLAN-TEMPLATE-MANAGEMENT.md`](./PLAN-TEMPLATE-MANAGEMENT.md) §5: whether a
+> theme and a template compose, and whether `presentation/generate` accepts a theme ref.
 
 ### Recovery path
 
@@ -103,6 +113,10 @@ and TD-11 additionally needs a template whose registration actually fell back.
 | **TD-26** | A NoteAI `Template` version is immutable once used by a `Generation`, but an engine-side layout edit changes rendering without bumping it — so a pinned "v1" can render differently over time. Unclear whether editing a template retro-changes decks already generated from it | 🟡 | 2026-07-29 | **backlog** | The rule is decided and documented; behaviour matches it |
 | **TD-27** | **Docling does not survive container recreation.** `docker-entrypoint.sh` installs it into `/app/.venv`, but the only volume on `open-notebook` is `notebook_data:/app/data`. A plain `restart` keeps it; `--force-recreate`, an image bump or any compose edit to that service silently removes the extractor, and every `.docx`/`.pptx`/`.pdf` upload fails again with "Could not extract content". This already happened once mid-session | 🔴 | 2026-07-31 | **next deploy window** | See the recipe below; a `--force-recreate` is followed by a successful `.docx` ingestion with `text_len > 0` |
 | **TD-28** | **A citation cannot link back to its source.** `Citation.source_ref` carries the *engine's* id (`source:abc…`), while the sources rail keys off the orchestrator's own `Source.id` (a UUID). Nothing maps between them, so "click a citation → highlight the source" is not implementable on the client today | 🟡 | 2026-07-31 | **Phase E** | The chat response resolves `source_ref` → `source_id`, and clicking a citation selects that row in the sources rail |
+| **TD-32** | **Template registration has never once succeeded.** `engines/presenton.py` calls `/api/v1/ppt/**templates**/…` (plural); the engine serves `/api/v1/ppt/**template**/…` (singular). Every registration 404s → `fallback` → stock theme. Proven on the live engine 2026-08-06 (`404` plural / `422` singular). Second defect stacked behind it: `/template/init` returns `layouts: null`, so even the corrected path needs `/template/async` instead | 🔴 | 2026-08-06 | **`TM-1`** | A branded `.pptx` upload reaches `registration_status = registered` and its deck renders with that branding. Contract test pins both literal paths |
+| **TD-33** | Template registration runs **inline inside the upload request** (`registry/service.py:96`). With `/async` + polling this cannot stay synchronous, and it is why there is no progress state — a registering template is indistinguishable from a failed one | 🟠 | 2026-08-06 | **`TM-2`** | `POST /templates` returns sub-second with `pending`; an Arq job drives it to terminal |
+| **TD-34** | `RegistrationStatus.fallback` conflates four causes: no PPTX uploaded, 404, engine rejected, engine unreachable. Both live templates sit in `fallback` for two *different* reasons with one identical badge | 🟠 | 2026-08-06 | **`TM-3`** | `pending` / `registered` / `failed` / `no_source` are distinct, and "never had a PPTX" no longer reads as an error |
+| **TD-35** | No template deletion. The engine supports `DELETE /api/v1/ppt/template/{id}`; NoteAI exposes nothing, so engine-side templates accumulate with no way to remove them | 🟡 | 2026-08-06 | **`TM-5`** | Deleting an unused template removes it both sides; one pinned by a `Generation` returns 409 |
 | **TD-29** | Local `npm run build` fails on `@next/swc-darwin-arm64` — the package directory exists but its `.node` binary is missing, and the host runs Node v25 against Next 14.2.5. Docker builds are unaffected, so this only costs local verification | 🟢 | 2026-07-31 | **anytime** | `rm -rf node_modules && npm install` under Node 20, then `npm run build` succeeds |
 
 ### TD-27 — the fix, written down before it is needed again

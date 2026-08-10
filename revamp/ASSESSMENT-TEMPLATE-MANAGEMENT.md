@@ -8,9 +8,14 @@ Written 2026-08-06, prompted by the Templat page showing both `Template Presenta
 
 **Evidence basis:** the deployed engine is `presenton/presenton` @ `v0.9.3-beta` plus two
 config-only commits (confirmed on the VPS 2026-08-05: `82555808` basePath, `41119096`
-assetPrefix, on top of tag `v0.9.3-beta`). Findings below are read from that tag's source on
-GitHub. **They should be confirmed against the running engine before code is written** — see
-`TM-0` in the plan. Anything I could not verify is marked **UNVERIFIED**.
+assetPrefix, on top of tag `v0.9.3-beta`). Findings below were read from that tag's source on
+GitHub, then **confirmed against the running engine on 2026-08-06** — every prediction held.
+See [`PLAN-TEMPLATE-MANAGEMENT.md`](./PLAN-TEMPLATE-MANAGEMENT.md) §0 for the observed output;
+the `UNVERIFIED` markers below are retained as a record of what was inference at the time of
+writing, and each is resolved there.
+
+> **Verdict: confirmed.** `404` on the plural path, `422` on the singular one. Both defects
+> real. Decisions locked and the fix sequenced as `TM-0`–`TM-6` in the plan.
 
 ---
 
