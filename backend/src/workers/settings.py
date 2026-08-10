@@ -7,7 +7,7 @@ from arq.connections import RedisSettings
 from ..core.config import get_settings
 from ..core.logging import configure_logging, get_logger
 from .reconcile import reenqueue_stranded_jobs
-from .tasks import run_generate, run_ingest
+from .tasks import run_generate, run_ingest, run_register_template
 
 logger = get_logger("orchestrator.worker")
 
@@ -33,7 +33,7 @@ async def _on_startup(ctx: dict) -> None:
 class WorkerSettings:
     """Referenced by `arq src.workers.WorkerSettings` in docker-compose."""
 
-    functions = [run_ingest, run_generate]
+    functions = [run_ingest, run_generate, run_register_template]
     on_startup = _on_startup
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_tries = get_settings().engine_max_retries

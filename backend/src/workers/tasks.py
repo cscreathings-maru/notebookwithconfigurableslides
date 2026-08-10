@@ -122,6 +122,47 @@ def _finish_job(
     db.commit()
 
 
+async def run_register_template(
+    ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any
+) -> None:
+    from ..engines.presenton import PresentonClient
+    from ..registry.registration import run_template_registration
+
+    job_uuid = uuid.UUID(job_id)
+    tenant_uuid = uuid.UUID(tenant_id)
+
+    with SessionLocal() as db:
+        job = _require_job(db, job_uuid, tenant_uuid)
+        template_row_id = job.ref_id
+        job.status = JobStatus.running
+        job.attempts += 1
+        job.progress = {"step": "registering", "percent": 10}
+        db.add(job)
+        db.commit()
+
+        if template_row_id is None:
+            _finish_job(db, job_uuid, tenant_uuid, JobStatus.failed, "Job has no template ref.")
+            return
+
+        try:
+            await run_template_registration(
+                db=db,
+                template_row_id=template_row_id,
+                tenant_id=tenant_uuid,
+                presenton=PresentonClient(),
+                object_store=get_object_store(),
+            )
+            db.commit()
+        except Exception as exc:  # transient engine/transport error -> let Arq retry
+            db.rollback()
+            logger.warning(
+                "register_template_retryable_error", extra={"job_id": job_id, "error": str(exc)}
+            )
+            raise
+
+        _finish_job(db, job_uuid, tenant_uuid, JobStatus.succeeded, None)
+
+
 async def run_generate(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any) -> None:
     from ..engines.presenton import PresentonClient
     from ..generation.worker import generate_presentation

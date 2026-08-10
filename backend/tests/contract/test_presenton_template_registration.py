@@ -1,24 +1,28 @@
-"""T-1.3: template registration must satisfy the engine's declared request model.
+"""TM-1: template registration must call the paths the engine actually serves.
 
-**This is why branding never reached a deck.** The old client sent
-`{"name", "source_pptx_url"}` to `POST /api/v1/ppt/templates/init`. The engine's
-`InitTemplateRequest` declares:
+**This is the test that should have caught the bug it's named after, and didn't.**
+The previous version of this file asserted `/api/v1/ppt/templates/...` (plural) as
+the *expected* path -- it was testing the client's behaviour against itself, not
+against the engine's declared routes, so it passed while every real registration
+404'd. Every uploaded template silently rendered the stock theme (TD-32).
 
-    pptx_url: str                    # required
-    slide_image_urls: list[str]      # required
-    fonts / name / description / icon_type   # optional
+Root cause, confirmed against the deployed engine's `openapi.json` 2026-08-06:
 
-There is no `source_pptx_url` field, and neither required field was supplied — so
-every call failed validation with a 422, took the `>= 400` branch, and fell back to
-the stock theme. The configured brand tokens were never the problem; the request was.
+    404 /api/v1/ppt/templates/fonts-upload-and-slides-preview   (what the client called)
+    422 /api/v1/ppt/template/fonts-upload-and-slides-preview    (what the engine serves)
 
-Registration is therefore two steps, and **the uploaded PPTX *is* the brand** — `init`
-accepts no colour or font parameters and derives layouts, palette and typography from
-the deck itself.
+`TEMPLATE_ROUTER` declares `prefix="/template"` (singular). A 422 on the singular
+path is the proof it exists: the route was reached and rejected an empty body.
 
-Verified against `ghcr.io/presenton/presenton:latest`,
-`api/v1/ppt/endpoints/template.py` (`InitTemplateRequest` at :81, `/init` at :988) and
-`templates/fonts_and_slides_preview.py` (`FontsUploadAndSlidesPreviewResponse` at :69).
+Second, independent defect stacked behind it: `POST /template/init` returns a
+template with `layouts: null` -- a skeleton, not something renderable. The complete
+path is `POST /template/async`, confirmed present on the live engine, which returns
+an `AsyncTaskModel` to poll via `GET /async-tasks/status/{id}` (outside `/ppt`,
+confirmed by the same dump) rather than a finished template synchronously.
+
+`CreateTemplateRequest`'s exact fields (`pptx_url`, `slide_image_urls` required;
+`fonts`/`name` optional) and `AsyncTaskModel`'s shape (`id`, `error`, `data`, no
+confirmed `status` enum values) are pinned here from that dump, not guessed.
 """
 
 from __future__ import annotations
@@ -41,50 +45,80 @@ PREVIEW_OK = {
     "fonts": {"Inter": "/app_data/fonts/Inter.ttf"},
 }
 
+# The literal, confirmed-correct routes. Any change to these two strings should
+# fail a test loudly -- that is the whole point of this file.
+_PREVIEW_PATH = "/api/v1/ppt/template/fonts-upload-and-slides-preview"
+_ASYNC_PATH = "/api/v1/ppt/template/async"
+_TASK_STATUS_PATH = "/api/v1/async-tasks/status/task_xyz"
+
 
 def _client(handler) -> PresentonClient:
     http = httpx.AsyncClient(transport=httpx.MockTransport(handler), base_url=BASE)
     return PresentonClient(client=http)
 
 
-def _two_step(preview_status: int = 200, init_status: int = 201, init_body=None):
-    """Handler covering both registration calls, recording each request."""
+def _happy_path(
+    *,
+    preview_status: int = 200,
+    async_status: int = 201,
+    task_body: dict | None = None,
+):
+    """Handler covering preview -> async create -> one status poll that is
+    already terminal. Records every request seen, keyed by which call it was."""
     seen: dict = {}
+    default_task = {
+        "id": "task_xyz",
+        "type": "template_creation",
+        "status": "completed",
+        "message": None,
+        "error": None,
+        "data": {"template_id": "template_abc123"},
+        "created_at": "2026-08-06T00:00:00Z",
+        "updated_at": "2026-08-06T00:00:01Z",
+    }
 
     def handler(request: httpx.Request) -> httpx.Response:
-        if "fonts-upload-and-slides-preview" in request.url.path:
-            seen["preview_path"] = request.url.path
+        path = request.url.path
+        if "fonts-upload-and-slides-preview" in path:
+            seen["preview_path"] = path
             seen["preview_content_type"] = request.headers.get("content-type", "")
             seen["preview_body"] = request.content
             return httpx.Response(preview_status, json=PREVIEW_OK)
-        seen["init_path"] = request.url.path
-        seen["init_body"] = json.loads(request.content)
-        body = "template_abc123" if init_body is None else init_body
-        return httpx.Response(init_status, json=body)
+        if path.endswith("/template/async"):
+            seen["async_path"] = path
+            seen["async_body"] = json.loads(request.content)
+            return httpx.Response(async_status, json={"id": "task_xyz"})
+        if "async-tasks/status/" in path:
+            seen["status_path"] = path
+            return httpx.Response(200, json=task_body if task_body is not None else default_task)
+        raise AssertionError(f"unexpected request: {request.method} {path}")
 
     return handler, seen
 
 
-async def test_registration_uploads_the_pptx_then_initialises() -> None:
+async def test_registration_calls_the_singular_template_prefix_the_engine_serves() -> None:
+    """The regression test. `/templates/...` (plural) 404s on the real engine;
+    `/template/...` (singular) is what TEMPLATE_ROUTER actually declares."""
     # Arrange
-    handler, seen = _two_step()
+    handler, seen = _happy_path()
 
     # Act
     result = await _client(handler).register_template(
         name="acme__Brand", pptx_bytes=PPTX, pptx_filename="brand.pptx"
     )
 
-    # Assert -- both steps ran, in order
-    assert seen["preview_path"] == "/api/v1/ppt/templates/fonts-upload-and-slides-preview"
-    assert seen["init_path"] == "/api/v1/ppt/templates/init"
+    # Assert -- literal paths, not a substring/pattern that plural would also match
+    assert seen["preview_path"] == _PREVIEW_PATH
+    assert seen["async_path"] == _ASYNC_PATH
+    assert seen["status_path"] == _TASK_STATUS_PATH
     assert result.status is RegistrationStatus.registered
     assert result.ref == "template_abc123"
 
 
 async def test_the_pptx_is_uploaded_as_multipart_not_a_url() -> None:
-    """`init` cannot accept a file; the preview step is a real upload."""
+    """The async/init step cannot accept a file; the preview step is a real upload."""
     # Arrange
-    handler, seen = _two_step()
+    handler, seen = _happy_path()
 
     # Act
     await _client(handler).register_template(
@@ -96,10 +130,10 @@ async def test_the_pptx_is_uploaded_as_multipart_not_a_url() -> None:
     assert PPTX in seen["preview_body"]
 
 
-async def test_init_sends_every_field_the_engine_declares_required() -> None:
-    """The exact regression: both required fields were previously absent."""
+async def test_async_create_sends_every_field_the_engine_declares_required() -> None:
+    """CreateTemplateRequest requires pptx_url and slide_image_urls (TM-0)."""
     # Arrange
-    handler, seen = _two_step()
+    handler, seen = _happy_path()
 
     # Act
     await _client(handler).register_template(
@@ -107,18 +141,19 @@ async def test_init_sends_every_field_the_engine_declares_required() -> None:
     )
 
     # Assert
-    body = seen["init_body"]
+    body = seen["async_body"]
     assert body["pptx_url"] == PREVIEW_OK["pptx_url"]
     assert body["slide_image_urls"] == PREVIEW_OK["slide_image_urls"]
     assert body["name"] == "acme__Brand"
-    # The field the old client sent, which the engine does not declare at all.
+    # The field an even earlier client version sent (T-1.3), which the engine has
+    # never declared.
     assert "source_pptx_url" not in body
 
 
-async def test_fonts_from_the_preview_are_carried_into_init() -> None:
+async def test_fonts_from_the_preview_are_carried_into_the_async_create() -> None:
     """Typography is part of the brand and is discovered during the upload step."""
     # Arrange
-    handler, seen = _two_step()
+    handler, seen = _happy_path()
 
     # Act
     await _client(handler).register_template(
@@ -126,13 +161,72 @@ async def test_fonts_from_the_preview_are_carried_into_init() -> None:
     )
 
     # Assert
-    assert seen["init_body"]["fonts"] == PREVIEW_OK["fonts"]
+    assert seen["async_body"]["fonts"] == PREVIEW_OK["fonts"]
 
 
-async def test_a_bare_string_id_is_accepted() -> None:
-    """`/init` is declared `response_model=str`, so the body is not an object."""
+async def test_polls_until_the_task_reports_a_result() -> None:
+    """A task that isn't terminal yet (error AND data both null) must be polled
+    again, not treated as done. Terminal-ness is `error`/`data` presence, not a
+    specific `status` string -- AsyncTaskStatus's enum values were not part of
+    TM-0's confirmed contract."""
     # Arrange
-    handler, _seen = _two_step(init_body="just_the_id")
+    polls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        path = request.url.path
+        if "fonts-upload-and-slides-preview" in path:
+            return httpx.Response(200, json=PREVIEW_OK)
+        if path.endswith("/template/async"):
+            return httpx.Response(201, json={"id": "task_xyz"})
+        polls.append(path)
+        if len(polls) < 3:
+            return httpx.Response(
+                200,
+                json={
+                    "id": "task_xyz", "type": "t", "status": "running",
+                    "message": None, "error": None, "data": None,
+                    "created_at": "x", "updated_at": "x",
+                },
+            )
+        return httpx.Response(
+            200,
+            json={
+                "id": "task_xyz", "type": "t", "status": "completed",
+                "message": None, "error": None,
+                "data": {"template_id": "template_abc123"},
+                "created_at": "x", "updated_at": "x",
+            },
+        )
+
+    async def no_sleep(_seconds: float) -> None:
+        return None
+
+    import src.engines.presenton as presenton_module
+
+    original_sleep = presenton_module.asyncio.sleep
+    presenton_module.asyncio.sleep = no_sleep  # type: ignore[assignment]
+    try:
+        result = await _client(handler).register_template(
+            name="acme__Brand", pptx_bytes=PPTX, pptx_filename="brand.pptx"
+        )
+    finally:
+        presenton_module.asyncio.sleep = original_sleep  # type: ignore[assignment]
+
+    # Assert -- polled more than once, and the eventual result won
+    assert len(polls) == 3
+    assert result.status is RegistrationStatus.registered
+    assert result.ref == "template_abc123"
+
+
+async def test_a_task_that_reports_an_error_is_a_failed_registration_not_success() -> None:
+    # Arrange
+    handler, _seen = _happy_path(
+        task_body={
+            "id": "task_xyz", "type": "t", "status": "failed",
+            "message": None, "error": {"detail": "invalid pptx structure"},
+            "data": None, "created_at": "x", "updated_at": "x",
+        }
+    )
 
     # Act
     result = await _client(handler).register_template(
@@ -140,32 +234,34 @@ async def test_a_bare_string_id_is_accepted() -> None:
     )
 
     # Assert
-    assert result.ref == "just_the_id"
-    assert result.status is RegistrationStatus.registered
+    assert result.status is RegistrationStatus.failed
+    assert "invalid pptx structure" in (result.error or "")
 
 
-async def test_no_pptx_reports_fallback_without_calling_the_engine() -> None:
-    """Colour pickers alone cannot brand a deck -- the engine has no parameter for them."""
+async def test_no_pptx_reports_no_source_without_calling_the_engine() -> None:
+    """Colour pickers alone cannot brand a deck -- the engine has no parameter for
+    them. `no_source`, not `failed`: nothing went wrong, there is nothing to
+    retry (TM-3)."""
     # Arrange
-    handler, seen = _two_step()
+    handler, seen = _happy_path()
 
     # Act
     result = await _client(handler).register_template(name="acme__NoDeck")
 
     # Assert
-    assert result.status is RegistrationStatus.fallback
+    assert result.status is RegistrationStatus.no_source
     assert "pptx" in (result.error or "").lower()
     assert seen == {}, "no request should be issued when there is nothing to upload"
 
 
 @pytest.mark.parametrize(
-    ("preview_status", "init_status"), [(422, 201), (500, 201), (200, 422)]
+    ("preview_status", "async_status"), [(422, 201), (500, 201), (200, 422)]
 )
-async def test_either_step_failing_reports_fallback_not_success(
-    preview_status: int, init_status: int
+async def test_either_step_failing_reports_failed_not_success(
+    preview_status: int, async_status: int
 ) -> None:
     # Arrange
-    handler, _seen = _two_step(preview_status=preview_status, init_status=init_status)
+    handler, _seen = _happy_path(preview_status=preview_status, async_status=async_status)
 
     # Act
     result = await _client(handler).register_template(
@@ -173,17 +269,17 @@ async def test_either_step_failing_reports_fallback_not_success(
     )
 
     # Assert -- creation still succeeds, but the degradation is recorded (T-1.6)
-    assert result.status is RegistrationStatus.fallback
+    assert result.status is RegistrationStatus.failed
     assert result.ref == "default"
     assert result.error
 
 
 async def test_a_preview_without_a_pptx_url_is_not_treated_as_success() -> None:
-    # Arrange -- engine answered 200 but did not give us what init needs
+    # Arrange -- engine answered 200 but did not give us what the async step needs
     def handler(request: httpx.Request) -> httpx.Response:
         if "preview" in request.url.path:
             return httpx.Response(200, json={"slide_image_urls": [], "fonts": {}})
-        return httpx.Response(201, json="unreachable")
+        raise AssertionError("should not reach the async step without a pptx_url")
 
     # Act
     result = await _client(handler).register_template(
@@ -191,4 +287,22 @@ async def test_a_preview_without_a_pptx_url_is_not_treated_as_success() -> None:
     )
 
     # Assert
-    assert result.status is RegistrationStatus.fallback
+    assert result.status is RegistrationStatus.failed
+
+
+async def test_an_async_create_with_no_task_id_is_not_treated_as_success() -> None:
+    # Arrange
+    def handler(request: httpx.Request) -> httpx.Response:
+        if "fonts-upload-and-slides-preview" in request.url.path:
+            return httpx.Response(200, json=PREVIEW_OK)
+        if request.url.path.endswith("/template/async"):
+            return httpx.Response(201, json={"type": "template_creation"})  # no id
+        raise AssertionError("should not poll without a task id")
+
+    # Act
+    result = await _client(handler).register_template(
+        name="acme__Brand", pptx_bytes=PPTX, pptx_filename="brand.pptx"
+    )
+
+    # Assert
+    assert result.status is RegistrationStatus.failed

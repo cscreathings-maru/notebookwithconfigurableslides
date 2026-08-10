@@ -1,8 +1,13 @@
 """Contract: registry versioning + immutability invariant.
 
-Per the data model: editing a profile/template creates a NEW version, and any
-version referenced by a Generation is immutable (its status can no longer be
-transitioned). These tests pin that behavior.
+Per the data model: editing a profile creates a NEW version, and any version
+referenced by a Generation is immutable. For profiles that still means "status
+cannot transition" (manual approve, unchanged). For templates (TM-4: no manual
+approve anymore -- registration success auto-approves) the immutability
+invariant that matters is TM-5's delete guard: a template version in use by a
+Generation cannot be deleted, which is the same protection `VersionInUseError`
+already gave profiles/templates before, just enforced at a different verb now
+that there is nothing left to "transition" on a template.
 """
 
 from __future__ import annotations
@@ -16,28 +21,49 @@ from src.api import deps as api_deps
 from src.core.db import SessionLocal
 from src.main import app
 from src.models import Generation, GenerationStatus
+from src.registry.registration import run_template_registration
+from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakePresenton
+from tests.fakes import FakeObjectStore, FakePresenton
 
 
 @pytest.fixture(autouse=True)
 def _wire_presenton():
     app.dependency_overrides[api_deps.get_presenton_client] = lambda: FakePresenton()
+    app.dependency_overrides[api_deps.get_object_store] = lambda: FakeObjectStore()
     yield
     app.dependency_overrides.clear()
 
 
-def _approved_template(client, sub: str, name: str = "Brand") -> dict:
+async def _approved_template(client, seed: Fixtures, sub: str, name: str = "Brand") -> dict:
     resp = client.post(
         "/api/v1/templates",
         data={"name": name, "brand_tokens": json.dumps({"primary": "#101010"})},
+        files={
+            "file": (
+                "brand.pptx",
+                b"PK\x03\x04 fake pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            )
+        },
         headers=auth(sub),
     )
-    assert resp.status_code == 201, resp.text
-    template = resp.json()
-    approved = client.post(f"/api/v1/templates/{template['id']}/approve", headers=auth(sub))
-    assert approved.status_code == 200, approved.text
-    return approved.json()
+    assert resp.status_code == 202, resp.text
+    created = resp.json()
+    with SessionLocal() as db:
+        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(created["id"]))
+        await run_template_registration(
+            db=db,
+            template_row_id=row.id,
+            tenant_id=seed.tenant_a,
+            presenton=FakePresenton(),
+            object_store=FakeObjectStore(),
+        )
+        db.commit()
+    listed = client.get("/api/v1/templates", headers=auth(sub)).json()
+    template = next(t for t in listed if t["id"] == created["id"])
+    assert template["status"] == "approved"  # TM-4
+    return template
 
 
 def _create_profile(client, sub: str, template_id: str, name: str = "Group Management") -> dict:
@@ -75,8 +101,8 @@ def _mark_profile_used(
         db.commit()
 
 
-def test_edit_creates_new_version_and_original_is_unchanged(client, seed: Fixtures) -> None:
-    template = _approved_template(client, seed.admin_a_sub)
+async def test_edit_creates_new_version_and_original_is_unchanged(client, seed: Fixtures) -> None:
+    template = await _approved_template(client, seed, seed.admin_a_sub)
     profile = _create_profile(client, seed.admin_a_sub, template["id"])
     assert profile["version"] == 1
 
@@ -113,8 +139,8 @@ def test_edit_creates_new_version_and_original_is_unchanged(client, seed: Fixtur
     assert v1["status"] == "approved"
 
 
-def test_used_profile_version_cannot_be_mutated(client, seed: Fixtures) -> None:
-    template = _approved_template(client, seed.admin_a_sub)
+async def test_used_profile_version_cannot_be_mutated(client, seed: Fixtures) -> None:
+    template = await _approved_template(client, seed, seed.admin_a_sub)
     profile = _create_profile(client, seed.admin_a_sub, template["id"])  # draft v1
     _mark_profile_used(
         seed.tenant_a, profile["id"], 1, template["id"], profile["template_version"]
@@ -127,8 +153,8 @@ def test_used_profile_version_cannot_be_mutated(client, seed: Fixtures) -> None:
     assert resp.json()["error"]["code"] == "version_in_use"
 
 
-def test_unused_draft_profile_can_be_approved(client, seed: Fixtures) -> None:
-    template = _approved_template(client, seed.admin_a_sub)
+async def test_unused_draft_profile_can_be_approved(client, seed: Fixtures) -> None:
+    template = await _approved_template(client, seed, seed.admin_a_sub)
     profile = _create_profile(client, seed.admin_a_sub, template["id"])
     resp = client.post(
         f"/api/v1/profiles/{profile['id']}/approve", headers=auth(seed.admin_a_sub)
@@ -137,13 +163,11 @@ def test_unused_draft_profile_can_be_approved(client, seed: Fixtures) -> None:
     assert resp.json()["status"] == "approved"
 
 
-def test_used_template_version_cannot_be_mutated(client, seed: Fixtures) -> None:
-    resp = client.post(
-        "/api/v1/templates",
-        data={"name": "Locked", "brand_tokens": json.dumps({})},
-        headers=auth(seed.admin_a_sub),
-    )
-    template = resp.json()
+async def test_used_template_cannot_be_deleted(client, seed: Fixtures) -> None:
+    """TM-5's version of the old "cannot mutate an in-use version" invariant --
+    templates have nothing left to transition (TM-4 removed manual approve), so
+    the immutability guard now lives on delete instead."""
+    template = await _approved_template(client, seed, seed.admin_a_sub, "Locked")
     with SessionLocal() as db:
         db.add(
             Generation(
@@ -157,8 +181,24 @@ def test_used_template_version_cannot_be_mutated(client, seed: Fixtures) -> None
         )
         db.commit()
 
-    approve = client.post(
-        f"/api/v1/templates/{template['id']}/approve", headers=auth(seed.admin_a_sub)
+    delete = client.delete(
+        f"/api/v1/templates/{template['id']}", headers=auth(seed.admin_a_sub)
     )
-    assert approve.status_code == 409
-    assert approve.json()["error"]["code"] == "version_in_use"
+    assert delete.status_code == 409
+    assert delete.json()["error"]["code"] == "version_in_use"
+
+    # And it's still there -- a 409 must mean nothing was touched.
+    listing = client.get("/api/v1/templates", headers=auth(seed.admin_a_sub)).json()
+    assert any(t["id"] == template["id"] for t in listing)
+
+
+async def test_unused_template_can_be_deleted(client, seed: Fixtures) -> None:
+    template = await _approved_template(client, seed, seed.admin_a_sub, "Removable")
+
+    delete = client.delete(
+        f"/api/v1/templates/{template['id']}", headers=auth(seed.admin_a_sub)
+    )
+    assert delete.status_code == 204
+
+    listing = client.get("/api/v1/templates", headers=auth(seed.admin_a_sub)).json()
+    assert all(t["id"] != template["id"] for t in listing)

@@ -117,6 +117,12 @@ class Settings(BaseSettings):
     ingest_poll_max_attempts: int = Field(default=60)  # ~2 min at 2s
     ingest_presign_ttl_seconds: int = Field(default=900)
 
+    # --- Template registration polling (TM-1/TM-2: layout generation via
+    # POST /template/async is an engine-side async task, polled the same way
+    # ingestion analysis already is) ---
+    template_registration_poll_interval_seconds: float = Field(default=3.0)
+    template_registration_poll_max_attempts: int = Field(default=100)  # ~5 min at 3s
+
     # --- Outline LLM (controlled prompt: low temperature, pinned model) ---
     outline_llm_temperature: float = Field(default=0.1)
     outline_llm_max_tokens: int = Field(default=2000)

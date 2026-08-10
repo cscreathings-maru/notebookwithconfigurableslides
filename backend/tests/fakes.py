@@ -272,9 +272,10 @@ class FakePresenton:
 
     def __init__(self, *, ref_prefix: str = "tref", register_error: str | None = None) -> None:
         self.ref_prefix = ref_prefix
-        # When set, registration reports a fallback with this reason (T-1.6).
+        # When set, registration reports `failed` with this reason (T-1.6).
         self.register_error = register_error
         self.registered: list[dict[str, Any]] = []
+        self.deleted_refs: list[str] = []
         self.generate_calls: list[dict[str, Any]] = []
         self.files: dict[str, bytes] = {}
 
@@ -288,11 +289,11 @@ class FakePresenton:
         """Mirrors the real client: the PPTX *is* the brand (T-1.3).
 
         Without a deck there is nothing for the engine to derive colours, fonts or
-        layouts from, so registration reports `fallback` rather than success.
+        layouts from, so registration reports `no_source` (TM-3) rather than success.
         """
         self.registered.append({"name": name, "pptx_filename": pptx_filename})
         if self.register_error is not None:
-            return TemplateRegistration.fallen_back(self.register_error)
+            return TemplateRegistration.rejected(self.register_error)
         if not pptx_bytes:
             return TemplateRegistration.without_source()
         return TemplateRegistration(
@@ -301,6 +302,9 @@ class FakePresenton:
             error=None,
             slide_image_urls=[f"/app_data/{name}-slide-1.png", f"/app_data/{name}-slide-2.png"],
         )
+
+    async def delete_template(self, *, ref: str) -> None:
+        self.deleted_refs.append(ref)
 
     async def generate(self, *, params: dict[str, Any]) -> dict[str, Any]:
         self.generate_calls.append(params)

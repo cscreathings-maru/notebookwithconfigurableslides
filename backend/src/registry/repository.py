@@ -74,6 +74,15 @@ class ProfileRepository(_VersionedRepository[StakeholderProfile]):
 class TemplateRepository(_VersionedRepository[Template]):
     model = Template
 
+    def all_versions(self, logical_id: uuid.UUID) -> list[Template]:
+        """Every version of one logical template, for delete (TM-5) -- deleting
+        "this template" means all of it, not just the version currently latest."""
+        return list(
+            self.db.execute(
+                self._scoped().where(self.model.logical_id == logical_id)
+            ).scalars().all()
+        )
+
 
 class RegistryUsage:
     """Reads the Generation table to decide whether a version is frozen."""
@@ -95,6 +104,13 @@ class RegistryUsage:
         return self._exists(
             Generation.template_id == logical_id, Generation.template_version == version
         )
+
+    def template_logical_id_in_use(self, logical_id: uuid.UUID) -> bool:
+        """Any version, not one specific version -- for delete (TM-5), which
+        removes every version of a logical template at once. A version-scoped
+        check would let deleting v1 silently orphan a Generation pinned to it
+        while a v2 sits unused."""
+        return self._exists(Generation.template_id == logical_id)
 
 
 # Re-export Base for type checkers that resolve the TypeVar bound indirectly.

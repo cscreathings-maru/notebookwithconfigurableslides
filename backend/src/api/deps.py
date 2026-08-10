@@ -144,9 +144,14 @@ def get_template_service(
     usage: RegistryUsage = Depends(get_registry_usage),
     presenton: PresentonClient = Depends(get_presenton_client),
     object_store: ObjectStore = Depends(get_object_store),
+    job_service: JobService = Depends(get_job_service),
 ) -> TemplateService:
     return TemplateService(
-        repo=repo, usage=usage, presenton=presenton, object_store=object_store
+        repo=repo,
+        usage=usage,
+        presenton=presenton,
+        object_store=object_store,
+        job_service=job_service,
     )
 
 

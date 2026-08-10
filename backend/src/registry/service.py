@@ -16,8 +16,10 @@ from typing import Any
 
 from ..core.errors import ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
+from ..jobs.service import JobService
 from ..metering.service import MeteringService
 from ..models import (
+    JobType,
     RegistrationStatus,
     RegistryStatus,
     StakeholderProfile,
@@ -36,7 +38,7 @@ class VersionInUseError(ConflictError):
     code = "version_in_use"
 
 
-def _tenant_namespace(db, tenant_id: uuid.UUID) -> str:
+def tenant_namespace(db, tenant_id: uuid.UUID) -> str:
     tenant = db.get(Tenant, tenant_id)
     return tenant.slug if tenant else tenant_id.hex
 
@@ -49,11 +51,13 @@ class TemplateService:
         usage: RegistryUsage,
         presenton,
         object_store: ObjectStore,
+        job_service: JobService,
     ):
         self.repo = repo
         self.usage = usage
         self.presenton = presenton
         self.object_store = object_store
+        self.job_service = job_service
 
     async def create(
         self,
@@ -64,9 +68,15 @@ class TemplateService:
         pptx_content: bytes | None,
         created_by: uuid.UUID,
     ) -> Template:
-        namespace = _tenant_namespace(self.repo.db, self.repo.tenant_id)
-        namespaced_name = f"{namespace}__{name}"
+        """Store the row and dispatch registration; does not wait for it (TM-2).
 
+        Registration is `POST /template/async` on the engine side -- layout
+        generation for every slide, running in parallel, that can take minutes.
+        Blocking this request on it is the reason there was never a progress
+        state: a registering template was indistinguishable from a failed one.
+        The row starts `pending` (the model's own default) and the worker
+        (`registry/registration.py`) drives it to a terminal state.
+        """
         logical_id = uuid.uuid4()
         source_pptx_uri: str | None = None
 
@@ -86,51 +96,34 @@ class TemplateService:
             )
             source_pptx_uri = key
 
-        # Register the template in Presenton (engine ref stays server-side).
-        # The client already converts every failure into a `fallback` registration, so
-        # there is deliberately no second handler here -- one fallback, one place.
-        #
-        # The PPTX goes as BYTES, not as a presigned URL: the engine's registration
-        # begins with a multipart upload, and it derives the brand from the deck itself
-        # (T-1.3). A URL was never a valid input to that endpoint.
-        registration = await self.presenton.register_template(
-            name=namespaced_name,
-            pptx_bytes=pptx_content,
-            pptx_filename=pptx_filename,
-        )
-
         template = Template(
             logical_id=logical_id,
             version=1,
             name=name,
-            presenton_template_ref=registration.ref,
             source_pptx_uri=source_pptx_uri,
             brand_tokens=brand_tokens,
             status=RegistryStatus.draft,
-            registration_status=registration.status,
-            registration_error=registration.error,
-            slide_image_urls=registration.slide_image_urls,
+            registration_status=RegistrationStatus.pending,
             created_by=created_by,
         )
         self.repo.add(template)
+        self.repo.db.flush()  # need template.id for the job's ref_id
         self._audit("template.created", template, created_by)
-        if registration.status is not RegistrationStatus.registered:
-            logger.warning(
-                "template_created_with_stock_theme",
-                extra={
-                    "template_id": str(logical_id),
-                    "registration_status": registration.status.value,
-                    "error": registration.error,
-                },
-            )
-        else:
-            logger.info("template_created", extra={"template_id": str(logical_id)})
+
+        job, _ = self.job_service.create(
+            job_type=JobType.register_template,
+            idempotency_key=f"register_template:{template.id}",
+            ref_id=template.id,
+        )
+        await self.job_service.commit_and_dispatch(job)
+
+        logger.info("template_created_registration_queued", extra={"template_id": str(logical_id)})
         return template
 
     async def reregister(
         self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None
     ) -> Template:
-        """Re-run engine registration for an existing template, from its stored PPTX.
+        """Re-queue engine registration for an existing template, from its stored PPTX.
 
         Registration previously happened only at creation, so a template registered
         through a broken request could never repair itself -- the operator's only route
@@ -139,6 +132,8 @@ class TemplateService:
 
         Deliberately does NOT create a new version: the template's content is unchanged.
         What changes is the engine ref, which was never user-visible and was wrong.
+        Async (TM-2), same as `create` -- resets to `pending` and returns immediately;
+        the caller polls the same way it already does after creation.
         """
         latest = self.repo.latest(logical_id)
         if latest is None:
@@ -151,45 +146,67 @@ class TemplateService:
                 code="no_source_pptx",
             )
 
-        pptx_bytes = self.object_store.get_bytes(key=latest.source_pptx_uri)
-        namespace = _tenant_namespace(self.repo.db, self.repo.tenant_id)
-        registration = await self.presenton.register_template(
-            name=f"{namespace}__{latest.name}",
-            pptx_bytes=pptx_bytes,
-            pptx_filename=latest.source_pptx_uri.rsplit("/", 1)[-1],
-        )
-
-        latest.presenton_template_ref = registration.ref
-        latest.registration_status = registration.status
-        latest.registration_error = registration.error
-        # A reregister is often run specifically to repair a broken registration
-        # (T-1.6) -- refresh the thumbnails too rather than leaving stale/empty
-        # ones from the first attempt.
-        latest.slide_image_urls = registration.slide_image_urls
+        latest.registration_status = RegistrationStatus.pending
+        latest.registration_error = None
         self.repo.db.add(latest)
         self.repo.db.flush()
-        self._audit("template.reregistered", latest, actor_user_id)
-        logger.info(
-            "template_reregistered",
-            extra={
-                "template_id": str(logical_id),
-                "registration_status": registration.status.value,
-                "error": registration.error,
-            },
+
+        job, _ = self.job_service.create(
+            job_type=JobType.register_template,
+            idempotency_key=f"register_template:{latest.id}:retry:{uuid.uuid4().hex}",
+            ref_id=latest.id,
         )
+        await self.job_service.commit_and_dispatch(job)
+
+        self._audit("template.reregistration_queued", latest, actor_user_id)
+        logger.info("template_reregistration_queued", extra={"template_id": str(logical_id)})
         return latest
 
-    def approve(self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None) -> Template:
-        latest = self.repo.latest(logical_id)
-        if latest is None:
+    async def delete(
+        self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None
+    ) -> None:
+        """Delete every version of a logical template (TM-5), engine-side then here.
+
+        Refuses if ANY version is pinned by a Generation -- deleting it would strand
+        that generation's provenance (`Generation.template_id`/`template_version`),
+        the same invariant `VersionInUseError` already protects on status
+        transitions, just checked across every version rather than one.
+        """
+        rows = self.repo.all_versions(logical_id)
+        if not rows:
             raise NotFoundError("Template not found.")
-        if self.usage.template_version_in_use(logical_id, latest.version):
-            raise VersionInUseError("Template version is in use and immutable.")
-        _approve_row(latest)
-        self.repo.db.add(latest)
+        if self.usage.template_logical_id_in_use(logical_id):
+            raise VersionInUseError(
+                "This template is used by an existing generation and cannot be deleted."
+            )
+
+        # Engine side first: if this fails, nothing here has been touched yet, so
+        # a retry is just calling delete again -- never a NoteAI row with no
+        # engine counterpart to explain.
+        engine_refs = {r.presenton_template_ref for r in rows if r.presenton_template_ref}
+        for ref in engine_refs:
+            await self.presenton.delete_template(ref=ref)
+
+        version_count = len(rows)
+        for row in rows:
+            self.repo.db.delete(row)
         self.repo.db.flush()
-        self._audit("template.approved", latest, actor_user_id)
-        return latest
+
+        # Captured before delete, not read off the now-deleted rows: audit/log
+        # after a flush should describe what happened, not risk touching an
+        # ORM object SQLAlchemy considers gone.
+        MeteringService(self.repo.db, self.repo.tenant_id).audit(
+            action="template.deleted",
+            resource={
+                "template_id": str(logical_id),
+                "versions_deleted": version_count,
+            },
+            actor_user_id=actor_user_id,
+        )
+        logger.info(
+            "template_deleted",
+            extra={"template_id": str(logical_id), "versions": version_count},
+        )
 
     def _audit(self, action: str, template: Template, actor: uuid.UUID | None) -> None:
         MeteringService(self.repo.db, self.repo.tenant_id).audit(

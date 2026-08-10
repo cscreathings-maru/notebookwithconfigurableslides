@@ -20,6 +20,8 @@ from src.generation.worker import generate_presentation
 from src.ingestion.service import ingest_source
 from src.main import app
 from src.models import Tenant, UsageRecord
+from src.registry.registration import run_template_registration
+from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
 from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, FakePresenton
 
@@ -80,13 +82,31 @@ def _set_byok(client, seed: Fixtures) -> None:
     )
 
 
-def _approved_profile(client, seed: Fixtures) -> str:
-    t = client.post(
+async def _approved_profile(client, seed: Fixtures) -> str:
+    resp = client.post(
         "/api/v1/templates",
         data={"name": "Brand", "brand_tokens": json.dumps({"primary": "#101010"})},
+        files={
+            "file": (
+                "brand.pptx",
+                b"PK\x03\x04 fake pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            )
+        },
         headers=auth(seed.admin_a_sub),
-    ).json()
-    client.post(f"/api/v1/templates/{t['id']}/approve", headers=auth(seed.admin_a_sub))
+    )
+    assert resp.status_code == 202, resp.text
+    t = resp.json()
+    with SessionLocal() as db:
+        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(t["id"]))
+        await run_template_registration(
+            db=db,
+            template_row_id=row.id,
+            tenant_id=seed.tenant_a,
+            presenton=FakePresenton(),
+            object_store=FakeObjectStore(),
+        )
+        db.commit()
     body = {
         "name": "GM",
         "audience": "execs",
@@ -157,7 +177,7 @@ async def test_usage_rollups_per_user_and_tenant(
     client, seed: Fixtures, presenton, store, on_client
 ) -> None:
     _set_byok(client, seed)
-    profile_id = _approved_profile(client, seed)
+    profile_id = await _approved_profile(client, seed)
 
     # author_a: one outline + two generations; admin_a: one outline + one generation.
     pa, oa = await _project_with_outline(client, seed, seed.author_a_sub, profile_id, on_client)
@@ -212,7 +232,7 @@ async def test_tenant_at_quota_is_blocked_and_recorded(
     client, seed: Fixtures, presenton, store, on_client, alert_sink
 ) -> None:
     _set_byok(client, seed)
-    profile_id = _approved_profile(client, seed)
+    profile_id = await _approved_profile(client, seed)
 
     with SessionLocal() as db:
         tenant = db.get(Tenant, seed.tenant_a)

@@ -38,13 +38,23 @@ class RegistryStatus(str, enum.Enum):
 class RegistrationStatus(str, enum.Enum):
     """Outcome of registering a template with the slide engine.
 
-    `fallback` means the template row exists but the engine is rendering with its stock
-    theme -- decks will not carry the uploaded branding. Recorded rather than swallowed
-    so the UI can say so; previously both failure paths silently returned "default".
+    Four distinct situations (TM-3) -- previously collapsed into one `fallback` value,
+    which meant "still working", "you never uploaded a deck", and "the engine rejected
+    it" all rendered as the identical badge.
+
+    - `pending`: queued or in flight. Registration is now an async job (TM-2) --
+      POST /template/async on the engine side generates every layout in parallel and
+      can take minutes, so this is not a transient in-request state.
+    - `registered`: usable. Decks render with the uploaded branding.
+    - `no_source`: no PPTX was uploaded. Not an error -- the engine has nothing to
+      derive a brand from, and there is nothing to retry.
+    - `failed`: the engine definitively rejected the deck, or was unreachable.
+      `registration_error` carries the reason.
     """
 
+    pending = "pending"
     registered = "registered"
-    fallback = "fallback"
+    no_source = "no_source"
     failed = "failed"
 
 
@@ -98,7 +108,7 @@ class Template(UuidPkMixin, Base):
     )
     registration_status: Mapped[RegistrationStatus] = mapped_column(
         Enum(RegistrationStatus, name="template_registration_status"),
-        default=RegistrationStatus.registered,
+        default=RegistrationStatus.pending,
         nullable=False,
     )
     registration_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)

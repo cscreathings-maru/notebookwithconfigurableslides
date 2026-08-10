@@ -17,6 +17,8 @@ from src.core.db import SessionLocal
 from src.generation.worker import generate_presentation
 from src.ingestion.service import ingest_source
 from src.main import app
+from src.registry.registration import run_template_registration
+from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
 from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, FakePresenton
 
@@ -58,15 +60,36 @@ def _set_byok(client, seed: Fixtures) -> None:
     assert resp.status_code == 200, resp.text
 
 
-def _approved_template(client, seed: Fixtures) -> dict:
-    t = client.post(
+async def _approved_template(client, seed: Fixtures) -> dict:
+    """Create + drive registration to completion (TM-2: async, no manual approve
+    -- TM-4 auto-approves on a successful registration, which needs a PPTX to
+    reach `registered` rather than `no_source`)."""
+    resp = client.post(
         "/api/v1/templates",
         data={"name": "Brand", "brand_tokens": json.dumps({"primary": "#101010"})},
+        files={
+            "file": (
+                "brand.pptx",
+                b"PK\x03\x04 fake pptx",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            )
+        },
         headers=auth(seed.admin_a_sub),
-    ).json()
-    return client.post(
-        f"/api/v1/templates/{t['id']}/approve", headers=auth(seed.admin_a_sub)
-    ).json()
+    )
+    assert resp.status_code == 202, resp.text
+    created = resp.json()
+    with SessionLocal() as db:
+        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(created["id"]))
+        await run_template_registration(
+            db=db,
+            template_row_id=row.id,
+            tenant_id=seed.tenant_a,
+            presenton=FakePresenton(),
+            object_store=FakeObjectStore(),
+        )
+        db.commit()
+    listed = client.get("/api/v1/templates", headers=auth(seed.admin_a_sub)).json()
+    return next(t for t in listed if t["id"] == created["id"])
 
 
 def _approved_profile(client, seed: Fixtures, template_id: str) -> dict:
@@ -137,7 +160,7 @@ async def test_full_pipeline_to_ready_and_download(
     client, seed: Fixtures, presenton, store, on_client
 ) -> None:
     _set_byok(client, seed)
-    template = _approved_template(client, seed)
+    template = await _approved_template(client, seed)
     profile = _approved_profile(client, seed, template["id"])
     project_id = await _project_with_ready_source(client, seed, on_client)
 
@@ -193,9 +216,9 @@ async def test_full_pipeline_to_ready_and_download(
     assert "/app_data/" not in dl.headers.get("content-disposition", "")
 
 
-def test_generation_blocked_until_sources_ready(client, seed: Fixtures) -> None:
+async def test_generation_blocked_until_sources_ready(client, seed: Fixtures) -> None:
     _set_byok(client, seed)
-    template = _approved_template(client, seed)
+    template = await _approved_template(client, seed)
     profile = _approved_profile(client, seed, template["id"])
 
     project = client.post(
@@ -228,7 +251,7 @@ async def test_generation_proceeds_from_ready_and_skips_failed_sources(
     """A source that FAILED to ingest must not block generation forever — the deck is
     built from the ready sources and the failed one is recorded as skipped."""
     _set_byok(client, seed)
-    template = _approved_template(client, seed)
+    template = await _approved_template(client, seed)
     profile = _approved_profile(client, seed, template["id"])
 
     project = client.post(
@@ -279,7 +302,7 @@ async def test_generation_blocked_when_no_source_is_ready(
     client, seed: Fixtures, on_client
 ) -> None:
     _set_byok(client, seed)
-    template = _approved_template(client, seed)
+    template = await _approved_template(client, seed)
     profile = _approved_profile(client, seed, template["id"])
 
     project = client.post(

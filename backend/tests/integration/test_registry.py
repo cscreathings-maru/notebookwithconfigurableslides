@@ -2,18 +2,25 @@
 
 - admin-only writes; authors read approved only.
 - profiles/templates are strictly tenant-scoped (cross-tenant -> 404 / hidden).
-- creating a template with a PPTX imports it via Presenton (tenant-namespaced);
-  engine refs and pptx keys never reach the client.
+- creating a template with a PPTX queues registration via Presenton (TM-2, async;
+  tenant-namespaced); engine refs and pptx keys never reach the client.
+- TM-4: there is no manual approve step for templates anymore -- a successful
+  registration auto-approves. Governance (approved-template-required) is proven
+  by a template that hasn't finished registering yet, not by withholding approval.
 """
 
 from __future__ import annotations
 
 import json
+import uuid
 
 import pytest
 
 from src.api import deps as api_deps
+from src.core.db import SessionLocal
 from src.main import app
+from src.registry.registration import run_template_registration
+from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
 from tests.fakes import FakeObjectStore, FakePresenton
 
@@ -46,14 +53,29 @@ def _create_template(client, sub: str, name: str, file: bool = False) -> dict:
             )
         }
     resp = client.post("/api/v1/templates", **kwargs)
-    assert resp.status_code == 201, resp.text
+    assert resp.status_code == 202, resp.text
     return resp.json()
 
 
-def _approve_template(client, sub: str, template_id: str) -> dict:
-    resp = client.post(f"/api/v1/templates/{template_id}/approve", headers=auth(sub))
-    assert resp.status_code == 200, resp.text
-    return resp.json()
+async def _registered_template(
+    client, seed: Fixtures, sub: str, name: str, *, presenton: FakePresenton | None = None
+) -> dict:
+    """Create WITH a pptx and drive registration to completion. TM-4 auto-approves
+    on success, so this is also "an approved template" -- the only kind there is
+    now."""
+    created = _create_template(client, sub, name, file=True)
+    with SessionLocal() as db:
+        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(created["id"]))
+        await run_template_registration(
+            db=db,
+            template_row_id=row.id,
+            tenant_id=seed.tenant_a,
+            presenton=presenton or FakePresenton(),
+            object_store=FakeObjectStore(),
+        )
+        db.commit()
+    listed = client.get("/api/v1/templates", headers=auth(sub)).json()
+    return next(t for t in listed if t["id"] == created["id"])
 
 
 def _profile_body(template_id: str, name: str = "Group Management") -> dict:
@@ -76,19 +98,25 @@ def test_template_response_hides_engine_ref_and_pptx(client, seed: Fixtures) -> 
     assert "presenton_template_ref" not in template
     assert "source_pptx_uri" not in template
     assert template["status"] == "draft"
+    assert template["registration_status"] == "pending"
 
 
-def test_pptx_import_calls_presenton_namespaced(
+async def test_pptx_import_calls_presenton_namespaced(
     client, seed: Fixtures, presenton: FakePresenton
 ) -> None:
-    body = _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    body = await _registered_template(
+        client, seed, seed.admin_a_sub, "Imported", presenton=presenton
+    )
     last = presenton.registered[-1]
-    # T-1.3: the PPTX reaches the engine as bytes, because the engine derives the
-    # brand from the deck itself. Previously a presigned URL was sent under a field
-    # name the engine does not declare, so every registration 422'd and fell back.
+    # T-1.3/TM-1: the PPTX reaches the engine as bytes, because the engine derives
+    # the brand from the deck itself. Two different broken request shapes have
+    # each caused every registration to fall through to `failed` in the past
+    # (a wrong field name, then a wrong URL) -- this pins the outcome, not the
+    # transport, so either regression fails it the same way.
     assert last["pptx_filename"] == "brand.pptx"
     assert last["name"].startswith("acme__")  # tenant-namespaced
     assert body["registration_status"] == "registered"
+    assert body["status"] == "approved"  # TM-4: auto-approved on success
 
 
 def test_viewer_cannot_create_template(client, seed: Fixtures) -> None:
@@ -100,19 +128,16 @@ def test_viewer_cannot_create_template(client, seed: Fixtures) -> None:
     assert resp.status_code == 403
 
 
-def test_author_cannot_create_profile(client, seed: Fixtures) -> None:
-    template = _approve_template(
-        client, seed.admin_a_sub, _create_template(client, seed.admin_a_sub, "Brand")["id"]
-    )
+async def test_author_cannot_create_profile(client, seed: Fixtures) -> None:
+    template = await _registered_template(client, seed, seed.admin_a_sub, "Brand")
     resp = client.post(
         "/api/v1/profiles", json=_profile_body(template["id"]), headers=auth(seed.author_a_sub)
     )
     assert resp.status_code == 403
 
 
-def test_author_reads_approved_profiles_only(client, seed: Fixtures) -> None:
-    template = _create_template(client, seed.admin_a_sub, "Brand")
-    _approve_template(client, seed.admin_a_sub, template["id"])
+async def test_author_reads_approved_profiles_only(client, seed: Fixtures) -> None:
+    template = await _registered_template(client, seed, seed.admin_a_sub, "Brand")
 
     # One draft profile, one approved profile.
     draft = client.post(
@@ -136,19 +161,21 @@ def test_author_reads_approved_profiles_only(client, seed: Fixtures) -> None:
 def test_templates_are_tenant_scoped(client, seed: Fixtures) -> None:
     template = _create_template(client, seed.admin_a_sub, "Brand")
 
-    # Tenant B admin cannot see or approve tenant A's template.
+    # Tenant B admin cannot see or act on tenant A's template.
     listing_b = client.get("/api/v1/templates", headers=auth(seed.admin_b_sub)).json()
     assert all(t["id"] != template["id"] for t in listing_b)
 
-    approve_b = client.post(
-        f"/api/v1/templates/{template['id']}/approve", headers=auth(seed.admin_b_sub)
+    reregister_b = client.post(
+        f"/api/v1/templates/{template['id']}/reregister", headers=auth(seed.admin_b_sub)
     )
-    assert approve_b.status_code == 404
+    assert reregister_b.status_code == 404
 
 
 def test_profile_requires_approved_template(client, seed: Fixtures) -> None:
-    # Draft (unapproved) template cannot back a profile.
+    # A template still `pending` (registration never run) cannot back a profile --
+    # TM-4 only auto-approves a template once registration actually succeeds.
     template = _create_template(client, seed.admin_a_sub, "DraftBrand")
+    assert template["status"] == "draft"
     resp = client.post(
         "/api/v1/profiles", json=_profile_body(template["id"]), headers=auth(seed.admin_a_sub)
     )

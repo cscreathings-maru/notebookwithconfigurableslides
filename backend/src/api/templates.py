@@ -1,8 +1,12 @@
 """Templates router (admin writes; authors read approved only).
 
 Create accepts {name, brand_tokens} plus an optional PPTX (multipart). With a PPTX
-the template is imported via Presenton (import-from-PPTX) under a tenant-namespaced
-name; the engine ref and the stored PPTX key never reach the client.
+the template is queued for registration with Presenton (TM-2: an async engine-side
+job, not run inline) under a tenant-namespaced name; the engine ref and the stored
+PPTX key never reach the client.
+
+TM-4: registration success auto-approves the template -- there is no manual
+approve step anymore. A template's usable state is entirely `registration_status`.
 """
 
 from __future__ import annotations
@@ -74,7 +78,7 @@ def _parse_brand_tokens(raw: str) -> dict:
     return value
 
 
-@router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
+@router.post("", response_model=TemplateResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_template(
     name: str = Form(..., min_length=1),
     brand_tokens: str = Form(default="{}"),
@@ -82,6 +86,9 @@ async def create_template(
     principal: Principal = Depends(require_admin),
     service: TemplateService = Depends(get_template_service),
 ) -> TemplateResponse:
+    """202, not 201 (TM-2): the row is created, but registration is queued, not
+    done -- the response's `registration_status` is `pending`, same shape as
+    `POST /sources` and `POST /generations` reporting `queued` immediately."""
     pptx_filename = file.filename if file is not None else None
     pptx_content = await file.read() if file is not None else None
     template = await service.create(
@@ -103,13 +110,16 @@ def list_templates(
     return [_to_response(t) for t in service.list_all(approved_only=approved_only)]
 
 
-@router.post("/{template_id}/approve", response_model=TemplateResponse)
-def approve_template(
+@router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_template(
     template_id: uuid.UUID,
     principal: Principal = Depends(require_admin),
     service: TemplateService = Depends(get_template_service),
-) -> TemplateResponse:
-    return _to_response(service.approve(template_id, actor_user_id=principal.user_id))
+) -> None:
+    """TM-5. Refuses (409) if any version of this template is pinned by a
+    Generation -- see `TemplateService.delete` for why that check spans every
+    version, not just the latest."""
+    await service.delete(template_id, actor_user_id=principal.user_id)
 
 
 @router.post("/{template_id}/reregister", response_model=TemplateResponse)

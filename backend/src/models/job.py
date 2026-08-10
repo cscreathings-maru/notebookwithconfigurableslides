@@ -16,6 +16,7 @@ from .base import Base, TimestampMixin, UpdatedAtMixin, UuidPkMixin
 class JobType(str, enum.Enum):
     ingest = "ingest"
     generate = "generate"
+    register_template = "register_template"
 
 
 class JobStatus(str, enum.Enum):

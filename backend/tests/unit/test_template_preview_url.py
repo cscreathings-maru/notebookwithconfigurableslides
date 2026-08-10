@@ -29,7 +29,7 @@ def _template(ref: str | None) -> Template:
         status=RegistryStatus.draft,
         registration_status=(
             RegistrationStatus.registered if ref and ref != "default"
-            else RegistrationStatus.fallback
+            else RegistrationStatus.failed
         ),
     )
 
