@@ -326,7 +326,18 @@ nothing. No behavior change — nothing ever set these.
 - `check_consistency` / the consistency gate — freeform-outline generations have no
   `profile_id`, so the existing skip (`generation/worker.py:77`) already applies with no new
   code.
-- Studio's existing form — not deleted, its controls relocate behind Advanced (`DG-3.3`).
+- ~~Studio's existing form — not deleted, its controls relocate behind Advanced (`DG-3.3`).~~
+  **Superseded 2026-08-06.** Q4 was originally asked as *"once the picker replaces the
+  Studio form"* — DG-3.3 was then implemented keeping Studio's form as a second, parallel
+  path, which was never confirmed as its own decision and produced exactly the confusion
+  Q4's own phrasing implied wouldn't happen (a user testing Studio after this shipped found
+  it unchanged). Corrected: Studio's tab now embeds the same `OutlineBuilderCard` chat
+  uses (`embedded` prop drops the card chrome so it doesn't nest inside the panel's own),
+  with a content-source picker (notebook/summary/custom — "chat" excluded, see below) shown
+  since Studio has no specific turn to ground in. One dropped capability: Studio's old
+  "latest chat answer" content source needed resolving an unspecified message id at
+  build time, which the outline endpoint doesn't support; chat's own "generate from this
+  answer" button already covers grounding in a specific turn.
 - `brand_tokens` reaching the renderer (`TD-07`) — separate, larger piece of tech debt, not
   in scope of this brief and not blocking it (template *selection* works without it; template
   *fidelity beyond the uploaded PPTX* is a different, already-tracked problem).

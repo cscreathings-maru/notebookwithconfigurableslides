@@ -21,19 +21,24 @@ import {
 } from "@/services/api";
 
 /**
- * DG-1/DG-2: outline-first deck building, triggered the same way GenerateCard was
- * (an explicit `/generate` or the ＋ button — never inferred from prose, same
- * reasoning as GenerateCard's docstring). Replaces GenerateCard as ChatPanel's
- * entry point: an outline is cheap and reversible, a deck is neither, so this
- * splits them into two deliberate confirmations instead of one.
+ * DG-1/DG-2: outline-first deck building. Two entry points share this component:
+ * chat's `/generate` command or ＋ button (grounded in a specific turn via
+ * `chatMessageId`, never inferred from prose), and Studio's tab, which replaced
+ * its old one-shot form with this same flow so both places behave identically
+ * rather than drifting into two different generation experiences.
  *
  * `Cancel` before a deck exists / `Discard` after -- costs nothing either way, the
  * outline row is simply abandoned (no delete endpoint exists or is needed for it).
  */
 interface OutlineBuilderCardProps {
   projectId: string;
-  /** Ground the outline in a specific assistant turn, when opened from one. */
+  /** Ground the outline in a specific assistant turn, when opened from one. When
+   *  absent (Studio), a content-source picker is shown instead. */
   chatMessageId?: string;
+  /** True when embedded in a persistent panel (Studio) rather than floating in a
+   *  chat thread -- drops the card's own border/background so it doesn't nest
+   *  inside the panel's, since the panel already provides that chrome. */
+  embedded?: boolean;
   onCancel: () => void;
   onGenerated: (generation: Generation) => void;
 }
@@ -47,23 +52,33 @@ const TONES: Tone[] = [
   "sales_pitch",
 ];
 const DENSITIES: Verbosity[] = ["concise", "standard", "text-heavy"];
+// "chat" is deliberately absent here: without a specific chatMessageId to ground
+// it in, "latest chat answer" is a different, resolve-at-build-time mechanism
+// the outline endpoint doesn't support -- chat's own "generate from this answer"
+// button already covers that case via chatMessageId.
+const PICKABLE_SOURCES: { value: ContentSource; labelKey: MessageKey }[] = [
+  { value: "notebook", labelKey: "studio.source.notebook" },
+  { value: "summary", labelKey: "studio.source.summary" },
+  { value: "custom", labelKey: "studio.source.custom" },
+];
 
 type Phase = "setup" | "building" | "review" | "confirming";
 
 export function OutlineBuilderCard({
   projectId,
   chatMessageId,
+  embedded = false,
   onCancel,
   onGenerated,
 }: OutlineBuilderCardProps) {
   const t = useT();
   const { locale } = useLocale();
   const [phase, setPhase] = useState<Phase>("setup");
-  // Same auto-selection GenerateCard used: grounded in the turn it was opened
-  // from, otherwise the notebook as a whole. Not exposed as a picker in v1 --
-  // nothing in the locked decisions asked for one, and GenerateCard didn't have
-  // one either.
-  const contentSource: ContentSource = chatMessageId ? "chat" : "notebook";
+  // Grounded in the turn it was opened from, when there is one; otherwise the
+  // user picks (Studio, or chat's bare ＋/`/generate` with no message context).
+  const [pickedSource, setPickedSource] = useState<ContentSource>("notebook");
+  const [customMarkdown, setCustomMarkdown] = useState("");
+  const contentSource: ContentSource = chatMessageId ? "chat" : pickedSource;
 
   // Visible by default (Step 1 in the brief) -- distinct from the Advanced knobs
   // below, none of which the locked decisions (Q4) listed as hidden.
@@ -112,6 +127,7 @@ export function OutlineBuilderCard({
   const outlineConfig = (): FreeformOutlineConfig => ({
     content_source: contentSource,
     chat_message_id: contentSource === "chat" ? chatMessageId : undefined,
+    custom_markdown: contentSource === "custom" ? customMarkdown : undefined,
     tone,
     density,
     n_slides_hint: nSlidesHint.trim() ? Number(nSlidesHint) : undefined,
@@ -340,6 +356,10 @@ export function OutlineBuilderCard({
     </div>
   );
 
+  const wrapperClassName = embedded
+    ? "flex flex-col"
+    : "animate-fade-in rounded-xl border border-accent/25 bg-accent/5 p-4";
+
   if (phase === "setup" || phase === "building") {
     return (
       <form
@@ -348,18 +368,45 @@ export function OutlineBuilderCard({
           build();
         }}
         aria-label={t("outline.setupTitle")}
-        className="animate-fade-in rounded-xl border border-accent/25 bg-accent/5 p-4"
+        className={wrapperClassName}
       >
-        <div className="mb-3 flex items-center gap-2">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 text-accent">
-            <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
-          </svg>
-          <h3 className="text-sm font-semibold text-gray-900">{t("outline.setupTitle")}</h3>
-        </div>
+        {!embedded && (
+          <div className="mb-3 flex items-center gap-2">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-4 w-4 text-accent">
+              <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2" />
+            </svg>
+            <h3 className="text-sm font-semibold text-gray-900">{t("outline.setupTitle")}</h3>
+          </div>
+        )}
 
-        <p className="mb-3 text-xs text-gray-600">
-          {chatMessageId ? t("generate.fromMessage") : t("generate.fromNotebook")}
-        </p>
+        {chatMessageId ? (
+          <p className="mb-3 text-xs text-gray-600">{t("generate.fromMessage")}</p>
+        ) : (
+          <label className="mb-3 flex flex-col gap-1.5">
+            <span className="text-sm font-medium text-gray-700">{t("studio.contentSource")}</span>
+            <select
+              value={pickedSource}
+              onChange={(e) => setPickedSource(e.target.value as ContentSource)}
+              className="input-field"
+            >
+              {PICKABLE_SOURCES.map((s) => (
+                <option key={s.value} value={s.value}>
+                  {t(s.labelKey)}
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
+
+        {!chatMessageId && pickedSource === "custom" && (
+          <textarea
+            value={customMarkdown}
+            onChange={(e) => setCustomMarkdown(e.target.value)}
+            placeholder={t("studio.customPlaceholder")}
+            rows={5}
+            className="input-field mb-3 font-mono text-xs"
+          />
+        )}
 
         {templatePicker}
 
@@ -402,7 +449,7 @@ export function OutlineBuilderCard({
         confirm();
       }}
       aria-label={t("outline.reviewTitle")}
-      className="animate-fade-in rounded-xl border border-accent/25 bg-accent/5 p-4"
+      className={wrapperClassName}
     >
       <div className="mb-3 flex items-center justify-between">
         <div className="flex items-center gap-2">

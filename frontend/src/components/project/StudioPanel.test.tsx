@@ -123,6 +123,26 @@ describe("deck download", () => {
   });
 });
 
+describe("Studio uses the outline-first flow, not the old one-shot form", () => {
+  it("renders OutlineBuilderCard's setup card instead of a direct Generate button", async () => {
+    // Arrange -- pins the fix: Studio's tab previously rendered its own
+    // content-source/tone/density/slides form with a single "Generate deck"
+    // button that skipped straight to a billable action. It now embeds the same
+    // picker -> outline -> confirm flow chat uses -- generation is never one click.
+    stubApi();
+    vi.spyOn(api, "listLanguages").mockResolvedValue([]);
+
+    // Act
+    renderPanel();
+
+    // Assert -- the outline-first "build" action is present...
+    expect(await screen.findByRole("button", { name: /Buat kerangka/ })).toBeInTheDocument();
+    // ...and confirming a deck (the review phase's action) is not reachable
+    // before an outline exists -- there is no one-shot "generate now" button.
+    expect(screen.queryByRole("button", { name: /Hasilkan dek/ })).not.toBeInTheDocument();
+  });
+});
+
 describe("DG-4: studio-opened download cutover", () => {
   it("records the open and hides the download buttons once the backend confirms it", async () => {
     // Arrange -- the backend reports artifacts as no longer available once
