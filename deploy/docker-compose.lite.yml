@@ -23,7 +23,6 @@ volumes:
   surreal_data:
   minio_data:
   notebook_data:
-  presenton_data:
 
 services:
   traefik:
@@ -37,6 +36,12 @@ services:
     volumes:
       - "/var/run/docker.sock:/var/run/docker.sock:ro"
     networks: [edge]
+    # RM-0: every other service here declares a restart policy; this one didn't,
+    # so a host reboot brought Postgres/Redis/MinIO back (they are
+    # `restart: always`) but left Traefik down -- meaning nothing answered on
+    # the edge network at all. `unless-stopped` (not `always`) so a deliberate
+    # `docker compose stop` isn't fought by the daemon.
+    restart: unless-stopped
 
   # One-shot: apply migrations then seed the default tenant/admin, then exit.
   init:
@@ -77,6 +82,7 @@ services:
       # lives) or it may pick the appnet IP it can't reach -> 504 timeouts.
       - "traefik.docker.network=notebookllm-lite_edge"
     networks: [edge, appnet]
+    restart: unless-stopped
 
   orchestrator:
     build: ../backend
@@ -103,6 +109,7 @@ services:
       - "traefik.http.services.api.loadbalancer.server.port=8000"
       - "traefik.docker.network=notebookllm-lite_edge"
     networks: [edge, appnet]
+    restart: unless-stopped
 
   worker:
     build: ../backend
@@ -116,6 +123,7 @@ services:
       minio:
         condition: service_healthy
     networks: [appnet]
+    restart: unless-stopped
 
   postgres:
     image: postgres:16
@@ -214,57 +222,4 @@ services:
     restart: always
     # First run only — expose the UI to confirm the embedding provider/model:
     # ports: ["127.0.0.1:8502:8502", "127.0.0.1:5055:5055"]
-
-  presenton:
-    build:
-      context: ../presenton-custom
-    environment:
-      DISABLE_AUTH: "true"
-      MIGRATE_DATABASE_ON_STARTUP: "true"
-      LLM: "custom"                          # OpenAI-compatible → OpenRouter
-      CUSTOM_LLM_URL: ${OPENROUTER_BASE_URL:-https://openrouter.ai/api/v1}
-      CUSTOM_LLM_API_KEY: ${OPENROUTER_API_KEY}
-      # Slide generation is a structured-JSON job; chat is prose. They want different
-      # models, so this no longer inherits OPENROUTER_MODEL. It used to read
-      # `${OPENROUTER_MODEL:-google/gemini-2.5-flash}`, and because OPENROUTER_MODEL is
-      # always set the gemini default never applied -- the deck engine silently ran
-      # whatever the chat model was, and changing chat changed slides.
-      CUSTOM_MODEL: ${PRESENTON_MODEL:-google/gemini-2.5-flash}
-      IMAGE_PROVIDER: ${IMAGE_PROVIDER}
-      PEXELS_API_KEY: ${PEXELS_API_KEY}
-      CAN_CHANGE_KEYS: ${PRESENTON_CAN_CHANGE_KEYS}
-      AUTH_USERNAME: ${PRESENTON_AUTH_USERNAME}
-      AUTH_PASSWORD: ${PRESENTON_AUTH_PASSWORD}
-    volumes: ["presenton_data:/app_data"]
-    healthcheck:
-      # Any HTTP answer means it is listening; a redirect or 401 still counts.
-      test: ["CMD-SHELL", "curl -fsS -o /dev/null -w '%{http_code}' http://localhost:80/ | grep -qE '^[2345]' || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 5
-      start_period: 30s
-    ports:
-      - "127.0.0.1:${PRESENTON_EXPOSED_PORT:-8100}:80"
-    labels:
-      - "traefik.enable=true"
-      - "traefik.http.routers.presenton.rule=PathPrefix(`/editor`) || PathPrefix(`/api/v1/ppt`) || PathPrefix(`/api/can-change-keys`) || PathPrefix(`/api/runtime-config`) || PathPrefix(`/api/telemetry-status`) || PathPrefix(`/api/user-config`) || PathPrefix(`/api/validate-layout-code`) || PathPrefix(`/api/read-file`) || PathPrefix(`/api/mock`) || PathPrefix(`/api/v1/admin`) || PathPrefix(`/api/v1/auth/token`) || PathPrefix(`/api/export-presentation`) || PathPrefix(`/api/v1/auth/status`) || PathPrefix(`/app_data`) || PathPrefix(`/images`) || PathPrefix(`/uploads`) || PathPrefix(`/fonts`)"
-      - "traefik.http.routers.presenton.priority=20"
-      # NO stripprefix (T-1.1). With basePath: '/editor' baked into Presenton's build,
-      # Next.js expects the full /editor/... path; stripping it would produce the same
-      # 404 from the other direction. The engine's next.config.mjs must carry
-      # `basePath: '/editor'` -- assetPrefix alone prefixes assets but NOT routing,
-      # which is exactly why /editor returned Next's 404 layout while assets resolved.
-      - "traefik.http.services.presenton.loadbalancer.server.port=80"
-      - "traefik.docker.network=notebookllm-lite_edge"
-      # DG-0: Presenton gates its own web UI with HTTP Basic Auth (same credentials
-      # as its API) -- confirmed 2026-08-05 that with routing fixed, a browser hit
-      # to /editor now reaches the app and gets a 401 challenge it has no way to
-      # answer. The credential is engine-internal defense-in-depth, not a tenant
-      # boundary, so Traefik supplies it on every request it forwards here instead
-      # of removing it -- a direct hit to the container's own (127.0.0.1-bound) port
-      # still requires it, nothing outside Traefik gains new access.
-      - "traefik.http.routers.presenton.middlewares=presenton-auth@docker"
-      - "traefik.http.middlewares.presenton-auth.headers.customrequestheaders.Authorization=Basic ${PRESENTON_BASIC_AUTH_B64}"
-    networks: [edge, appnet]
-    restart: always
 

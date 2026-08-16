@@ -2,11 +2,9 @@
 
 from .circuit_breaker import CircuitBreaker, CircuitOpenError
 from .open_notebook import OpenNotebookClient
-from .presenton import PresentonClient
 
 __all__ = [
     "CircuitBreaker",
     "CircuitOpenError",
     "OpenNotebookClient",
-    "PresentonClient",
 ]

@@ -1,0 +1,16 @@
+Catatan Rapat Komite Produk - 14 Agustus 2026
+
+Hadir: tim produk, tim risiko, tim teknologi.
+
+Pembahasan pertama mengenai peluncuran fitur pembayaran QRIS lintas negara.
+Tim produk melaporkan uji coba terbatas berjalan lancar dengan 1.200 transaksi
+dan tingkat keberhasilan 99,1%. Tim risiko meminta tambahan kontrol untuk
+transaksi di atas Rp 10 juta.
+
+Pembahasan kedua mengenai keterlambatan migrasi core banking. Tim teknologi
+menyampaikan mundur dua minggu karena kendala integrasi dengan sistem
+pelaporan regulator.
+
+Keputusan: peluncuran QRIS lintas negara disetujui untuk tahap berikutnya
+dengan syarat kontrol tambahan selesai. Migrasi core banking dijadwalkan
+ulang ke November dengan tinjauan mingguan.

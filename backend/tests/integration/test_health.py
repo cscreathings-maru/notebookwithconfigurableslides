@@ -6,7 +6,7 @@ could reach them; and `/readyz` checked Postgres alone, so a Redis, MinIO or eng
 outage looked identical to a healthy service.
 
 Readiness is deliberately graded. Only Postgres — the system of record — can make the
-service `unready`; a Presenton outage degrades it, because the API still serves
+service `unready`; an Open Notebook outage degrades it, because the API still serves
 everything that is not deck rendering.
 """
 
@@ -18,7 +18,7 @@ import pytest
 HEALTH_PATHS = ["/healthz", "/api/healthz"]
 READY_PATHS = ["/readyz", "/api/readyz"]
 
-EXPECTED_DEPENDENCIES = {"postgres", "redis", "minio", "open_notebook", "presenton"}
+EXPECTED_DEPENDENCIES = {"postgres", "redis", "minio", "open_notebook"}
 
 
 @pytest.mark.parametrize("path", HEALTH_PATHS)
@@ -63,7 +63,7 @@ def test_reachable_database_keeps_the_service_ready(client) -> None:
 
 
 def test_an_engine_outage_degrades_but_does_not_unready(client) -> None:
-    """A dead Presenton must not take the orchestrator out of the load balancer."""
+    """A dead Open Notebook must not take the orchestrator out of the load balancer."""
     # Act -- no engines run in the test environment, so they are already down
     body = client.get("/api/readyz").json()
 

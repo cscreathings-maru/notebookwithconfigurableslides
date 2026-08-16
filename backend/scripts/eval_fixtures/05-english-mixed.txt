@@ -1,0 +1,15 @@
+Digital Transformation Roadmap 2027
+
+The bank will consolidate its three legacy customer portals into a single
+platform. Phase one covers authentication and account overview, targeted for
+Q1. Phase two covers payments and transfers, targeted for Q2.
+
+Estimated cost saving is Rp 120 billion annually from decommissioning the
+legacy systems and reducing duplicated support effort.
+
+Key risks: data migration completeness, regulator approval timing, and change
+fatigue among branch staff who have already absorbed two major system changes
+this year.
+
+Mitigation: a parallel-run period of eight weeks, early engagement with the
+regulator, and a dedicated branch enablement team.

@@ -1,0 +1,11 @@
+Data Penyaluran Kredit per Segmen 2026
+
+Segmen mikro: Q1 Rp 820 miliar, Q2 Rp 910 miliar, Q3 Rp 1.050 miliar.
+Segmen kecil: Q1 Rp 1.200 miliar, Q2 Rp 1.180 miliar, Q3 Rp 1.310 miliar.
+Segmen menengah: Q1 Rp 640 miliar, Q2 Rp 700 miliar, Q3 Rp 680 miliar.
+
+Rasio kredit bermasalah: mikro 2,1%, kecil 1,8%, menengah 3,4%.
+
+Segmen mikro menunjukkan pertumbuhan paling konsisten dengan risiko terkendali.
+Segmen menengah memerlukan perhatian karena rasio kredit bermasalah tertinggi
+dan pertumbuhan yang melambat pada kuartal ketiga.

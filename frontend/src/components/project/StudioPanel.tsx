@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { OutlineBuilderCard } from "@/components/project/OutlineBuilderCard";
-import { SlideEditorModal } from "@/components/project/SlideEditorModal";
 import { saveBlob } from "@/lib/download";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import type { MessageKey } from "@/lib/i18n/messages/en";
@@ -13,11 +12,24 @@ const STATUS_STYLE: Record<string, string> = {
   ready: "bg-emerald-500 text-emerald-700",
   failed: "bg-red-500 text-red-700",
   queued: "bg-gray-200 text-gray-500",
+  // Vestigial (LD-9): no new generation ever lands here anymore -- the
+  // per-deck review gate moved to the template's catalog (L3). Kept only so
+  // a pre-cutover row still renders a sane colour instead of falling
+  // through to the default.
+  awaiting_review: "bg-amber-400 text-amber-800",
   generating: "bg-amber-500 text-amber-700",
   validating: "bg-amber-500 text-amber-700",
 };
 
-const TERMINAL = new Set(["ready", "failed"]);
+const TERMINAL = new Set(["ready", "failed", "awaiting_review"]);
+const IN_FLIGHT = new Set(["queued", "generating", "validating"]);
+
+/** Which consistency checks a failed governed deck actually tripped. The report
+ *  has always carried this; nothing rendered it, so "failed" was the whole
+ *  explanation the user got. */
+function failedChecks(g: Generation): string[] {
+  return (g.consistency_report?.checks ?? []).filter((c) => !c.passed).map((c) => c.name);
+}
 
 /**
  * Studio's own generation surface now IS the outline-first flow
@@ -34,9 +46,6 @@ export function StudioPanel({ projectId }: { projectId: string }) {
   // persistent panel (nothing to dismiss the way a chat card is), so "start
   // over" after Cancel/Discard is a fresh mount instead of a fresh card.
   const [formKey, setFormKey] = useState(0);
-
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [activeEditor, setActiveEditor] = useState<{ id: string; url: string } | null>(null);
 
   const loadDecks = useCallback(() => {
     api.listGenerations(projectId).then(setDecks).catch(() => setDecks([]));
@@ -111,78 +120,85 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           </div>
         )}
 
-        <div className="flex flex-col gap-2 max-h-48 overflow-y-auto">
+        <div className="flex flex-col gap-2 max-h-64 overflow-y-auto">
           {decks.map((g) => (
             <div
               key={g.id}
-              className="flex items-center justify-between rounded-lg border border-gray-100 bg-white p-3 shadow-sm hover:shadow transition-shadow group"
+              className="flex flex-col gap-2 rounded-lg border border-gray-100 bg-white p-3 shadow-sm transition-shadow hover:shadow"
             >
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`w-2.5 h-2.5 rounded-full shrink-0 ${STATUS_STYLE[g.status]?.split(' ')[0] ?? "bg-gray-200"}`} />
-                <div className="min-w-0">
-                  <p className="text-sm font-medium text-gray-900 capitalize">
-                    {t(`status.gen.${g.status}` as MessageKey)}
-                  </p>
-                  <p className="text-xs text-gray-500 truncate mt-0.5">
-                    {(g.params.tone as string) ?? "—"} · {(g.params.n_slides as number) ?? "—"} {t("studio.slidesUnit")}
-                  </p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <div
+                    className={`h-2.5 w-2.5 shrink-0 rounded-full ${STATUS_STYLE[g.status]?.split(" ")[0] ?? "bg-gray-200"} ${
+                      IN_FLIGHT.has(g.status) ? "animate-pulse" : ""
+                    }`}
+                  />
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium capitalize text-gray-900">
+                      {t(`status.gen.${g.status}` as MessageKey)}
+                    </p>
+                    <p className="mt-0.5 truncate text-xs text-gray-500">
+                      {(g.params.tone as string) ?? "—"} · {(g.params.n_slides as number) ?? "—"}{" "}
+                      {t("studio.slidesUnit")}
+                    </p>
+                  </div>
                 </div>
+
+                {/* Always visible, never hover-gated: these were
+                    `opacity-0 group-hover:opacity-100`, which on any touch
+                    device meant the only way to get the finished deck out of
+                    the product was unreachable. */}
+                {g.status === "ready" && (
+                  <div className="ml-3 flex shrink-0 gap-1.5">
+                    {g.artifacts.pptx && (
+                      <button
+                        type="button"
+                        onClick={() => download(g, "pptx")}
+                        className="btn-secondary flex h-7 items-center gap-1 px-2 py-1 text-xs"
+                      >
+                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-3.5 w-3.5">
+                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                          <polyline points="7 10 12 15 17 10" />
+                          <line x1="12" y1="15" x2="12" y2="3" />
+                        </svg>
+                        {t("studio.downloadPptx")}
+                      </button>
+                    )}
+                    {g.artifacts.pdf && (
+                      <button
+                        type="button"
+                        onClick={() => download(g, "pdf")}
+                        className="btn-secondary flex h-7 items-center gap-1 px-2 py-1 text-xs"
+                      >
+                        PDF
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
 
-              {g.status === "ready" && (
-                <div className="flex shrink-0 gap-1.5 ml-3 opacity-0 group-hover:opacity-100 transition-opacity">
-                  {/* Hidden when the backend has no editor URL: the engine never
-                      produced a presentation, so there is nothing to open (T-1.2). */}
-                  {g.editor_url && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setActiveEditor({ id: g.id, url: g.editor_url! });
-                      setEditorOpen(true);
-                      // DG-4: from this point NoteAI's own download stops being
-                      // offered for this generation (server-enforced; this call
-                      // just gets the UI to reflect it without a reload). Fired
-                      // after opening, not blocking it -- editing is the
-                      // primary action, this is bookkeeping around it.
-                      api.markStudioOpened(g.id).then(loadDecks).catch(() => {
-                        setError(t("studio.studioOpenedTrackingFailed"));
-                      });
-                    }}
-                    className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7 border-blue-300 text-blue-700 bg-blue-50 hover:bg-blue-100 dark:bg-blue-950 dark:text-blue-300"
-                    title="Open interactive drag-and-edit slide canvas in Presenton"
-                  >
-                    <span>🎨 Editor</span>
-                  </button>
-                  )}
-                  {g.artifacts.pptx && (
-                    <button
-                      type="button"
-                      onClick={() => download(g, "pptx")}
-                      className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7"
-                      title="Download PPTX"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      PPTX
-                    </button>
-                  )}
-                  {g.artifacts.pdf && (
-                    <button
-                      type="button"
-                      onClick={() => download(g, "pdf")}
-                      className="btn-secondary py-1 px-2 text-xs flex items-center gap-1 h-7"
-                      title="Download PDF"
-                    >
-                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                        <polyline points="7 10 12 15 17 10" />
-                        <line x1="12" y1="15" x2="12" y2="3" />
-                      </svg>
-                      PDF
-                    </button>
+              {/* Vestigial (LD-9): the per-deck review gate that used to park
+                  a generation here is retired -- no new deck ever reaches
+                  this status. A pre-cutover row stuck here has no action
+                  left to take (the approve endpoint is gone); this just
+                  says so rather than offering a dead button. */}
+              {g.status === "awaiting_review" && (
+                <div className="rounded-md bg-amber-50 px-2.5 py-2 text-xs text-amber-800">
+                  {t("studio.awaitingReviewStale")}
+                </div>
+              )}
+
+              {/* A failed deck used to render the word "failed" and nothing
+                  else -- the reason was on the wire the whole time. */}
+              {g.status === "failed" && (
+                <div className="rounded-md bg-red-50 px-2.5 py-2 text-xs text-red-700">
+                  <p>{g.error ?? t("studio.generationFailed")}</p>
+                  {failedChecks(g).length > 0 && (
+                    <ul className="mt-1 list-disc pl-4">
+                      {failedChecks(g).map((name) => (
+                        <li key={name}>{t(`consistency.${name}` as MessageKey)}</li>
+                      ))}
+                    </ul>
                   )}
                 </div>
               )}
@@ -190,16 +206,6 @@ export function StudioPanel({ projectId }: { projectId: string }) {
           ))}
         </div>
       </div>
-
-      <SlideEditorModal
-        isOpen={editorOpen}
-        onClose={() => setEditorOpen(false)}
-        title="🎨 Interactive Presentation Slide Editor"
-        subtitle={`Polishing deck generation (${activeEditor?.id.slice(0, 8)}...) — move components and adjust font styling`}
-        // Composed by the backend from the ENGINE's presentation id. Building it here
-        // from Generation.id sent Presenton a Postgres UUID it had never seen (T-1.2).
-        editorUrl={activeEditor?.url}
-      />
     </div>
   );
 }

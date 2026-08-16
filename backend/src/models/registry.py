@@ -5,7 +5,7 @@ across versions of the same profile/template; `version` increments on each edit.
 A surrogate `row_id` is the physical PK so foreign keys and lookups stay simple.
 Clients reference the logical `id`; "latest" is the max `version` for that id.
 
-Engine-internal fields (presenton_template_ref, source_pptx_uri) are never exposed.
+The stored PPTX key (source_pptx_uri) is never exposed to clients.
 """
 
 from __future__ import annotations
@@ -35,26 +35,30 @@ class RegistryStatus(str, enum.Enum):
     archived = "archived"
 
 
-class RegistrationStatus(str, enum.Enum):
-    """Outcome of registering a template with the slide engine.
+class TemplateCatalogStatus(str, enum.Enum):
+    """Lifecycle of the LLM-produced `DesignCatalog` (LD-2/LD-3,
+    `PLAN-LLM-DECK-PLANNING.md`) -- the ONLY read of a template's `.pptx` as
+    of the Phase C cutover (LD-9/LD-11). Replaces `TemplateStatus`
+    (`deck/inspect.py`'s geometric layout read), which classified a
+    template's LAYOUTS; this classifies a template's SLIDES, which is where
+    the assessment found the design actually lives
+    (`ASSESSMENT-LLM-DECK-PLANNING.md` §1).
 
-    Four distinct situations (TM-3) -- previously collapsed into one `fallback` value,
-    which meant "still working", "you never uploaded a deck", and "the engine rejected
-    it" all rendered as the identical badge.
-
-    - `pending`: queued or in flight. Registration is now an async job (TM-2) --
-      POST /template/async on the engine side generates every layout in parallel and
-      can take minutes, so this is not a transient in-request state.
-    - `registered`: usable. Decks render with the uploaded branding.
-    - `no_source`: no PPTX was uploaded. Not an error -- the engine has nothing to
-      derive a brand from, and there is nothing to retry.
-    - `failed`: the engine definitively rejected the deck, or was unreachable.
-      `registration_error` carries the reason.
+    - `no_source`: no PPTX uploaded, nothing to catalogue.
+    - `cataloguing`: an LLM job is in flight (LD-3: an LLM call belongs in a
+      job, not a request/response cycle -- there is no synchronous
+      "inspect on upload" anymore).
+    - `ready`: at least one usable design was catalogued. Rendering still
+      additionally requires `catalog_reviewed_at is not None` (L3) --
+      `ready` alone means the LLM produced something, not that a human has
+      seen it.
+    - `failed`: the job errored, or produced no usable design.
+      `catalog_error` carries the reason.
     """
 
-    pending = "pending"
-    registered = "registered"
     no_source = "no_source"
+    cataloguing = "cataloguing"
+    ready = "ready"
     failed = "failed"
 
 
@@ -78,7 +82,8 @@ def _enum_values(enum_cls: type[enum.Enum]) -> list[str]:
 
 
 class Template(UuidPkMixin, Base):
-    """A company template version (1:1 with a Presenton template registration)."""
+    """A company template version, catalogued by an LLM (LD-2/LD-3) -- no
+    engine round trip, no geometric layout read."""
 
     __tablename__ = "template"
     __table_args__ = (
@@ -92,26 +97,32 @@ class Template(UuidPkMixin, Base):
         Uuid(as_uuid=True), ForeignKey("tenant.id"), nullable=False, index=True
     )
     name: Mapped[str] = mapped_column(String(255), nullable=False)
-    # Engine-internal — never exposed to clients.
-    presenton_template_ref: Mapped[str | None] = mapped_column(String(255), nullable=True)
     source_pptx_uri: Mapped[str | None] = mapped_column(String(1024), nullable=True)
     brand_tokens: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
-    # Slide preview images the engine returns at registration time (DG-3). Same-
-    # origin paths under the already-allowlisted /app_data prefix for a self-hosted
-    # engine (see engines/presenton.py's module docstring on response shapes) --
-    # servable directly, not engine-internal in the way presenton_template_ref is.
-    slide_image_urls: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
     status: Mapped[RegistryStatus] = mapped_column(
         Enum(RegistryStatus, name="template_status"),
         default=RegistryStatus.draft,
         nullable=False,
     )
-    registration_status: Mapped[RegistrationStatus] = mapped_column(
-        Enum(RegistrationStatus, name="template_registration_status"),
-        default=RegistrationStatus.pending,
+
+    # LD-3: `deck.catalog.DesignCatalog.model_dump(mode="json")` -- the LLM's
+    # reading of this template's slides as a reusable design vocabulary.
+    # Null until a cataloguing job has completed at least once.
+    slide_catalog: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)
+    catalog_status: Mapped[TemplateCatalogStatus] = mapped_column(
+        Enum(TemplateCatalogStatus, name="template_catalog_status"),
+        default=TemplateCatalogStatus.no_source,
         nullable=False,
     )
-    registration_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    catalog_error: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # LD-4/L3: set once an admin has reviewed (and optionally corrected) the
+    # catalog. `review_catalog()` also approves `status` at the same time --
+    # this IS the approval gate now (replaces the old "usable inspection
+    # auto-approves"), since a catalog an admin has not seen is not yet
+    # something a deck should be planned against.
+    catalog_reviewed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    catalog_reviewed_by: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
+
     created_by: Mapped[uuid.UUID | None] = mapped_column(Uuid(as_uuid=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(default=utcnow, nullable=False)
 

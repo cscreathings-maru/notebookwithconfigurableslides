@@ -1,8 +1,8 @@
 """Generation API schemas.
 
-Engine ids/paths (presenton_presentation_id, pptx_uri/pdf_uri, params) are never
-exposed; clients see status, the consistency report, provenance, and whether
-artifacts exist (downloaded via a signed URL endpoint).
+Storage keys (pptx_uri/pdf_uri) are never exposed; clients see status, the
+consistency report, provenance, and whether artifacts exist (downloaded via
+a signed URL endpoint).
 """
 
 from __future__ import annotations
@@ -36,7 +36,6 @@ class GenerationCreate(BaseModel):
     density: Verbosity = Verbosity.standard
     n_slides: int = Field(default=8, ge=1, le=40)
     template_id: uuid.UUID | None = None
-    web_search: bool = False
     model: str | None = None
     export_as: Literal["pptx", "pdf"] = "pptx"
     # AI output language NAME (e.g. "Bahasa Indonesia"); None → server default.
@@ -57,17 +56,12 @@ class GenerationResponse(BaseModel):
     template_version: int | None
     model: str | None
     provider: str | None
-    # Sanitized provenance of what was sent to Presenton (engine template ref and
-    # bulky generated content are stripped — only the governing knobs remain).
+    # Sanitized generation options -- bulky generated content is stripped, only
+    # the governing knobs remain.
     params: dict[str, Any]
     source_ids: list[Any]
     consistency_report: dict[str, Any] | None
     artifacts: ArtifactAvailability
-    # Same-origin link to open this deck in the slide editor, or None when there is
-    # nothing to open. Deliberately a URL, not the engine's presentation id: the client
-    # receives a capability it cannot forge meaning from, and changing the engine's URL
-    # shape stays a backend-only edit (T-1.2).
-    editor_url: str | None
     error: str | None
     created_by: uuid.UUID | None
     created_at: datetime

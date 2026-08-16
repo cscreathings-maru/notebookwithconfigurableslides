@@ -1,6 +1,6 @@
 """Consistency checker — the eval gate before a deck is published.
 
-Judges the deck Presenton actually produced (via `DeckFacts` parsed from the PPTX),
+Judges the deck `deck/renderer.py` actually produced (via `DeckFacts` parsed from the PPTX),
 not merely the plan that drove it. Asserts: every required section is present and in
 order *in the deck*, the real slide count is within the profile's range, a template was
 applied, and no banned content shipped. Returns a structured report; the worker blocks

@@ -18,7 +18,7 @@ from src.core.db import SessionLocal
 from src.ingestion.service import ingest_source
 from src.main import app
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, FakePresenton
+from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook
 
 PROVIDER = {
     "provider": "deepseek",
@@ -30,7 +30,6 @@ PROVIDER = {
 
 @pytest.fixture(autouse=True)
 def _wire():
-    app.dependency_overrides[api_deps.get_presenton_client] = lambda: FakePresenton()
     app.dependency_overrides[api_deps.get_object_store] = lambda: FakeObjectStore()
     app.dependency_overrides[api_deps.get_open_notebook_client] = lambda: FakeOpenNotebook()
     app.dependency_overrides[api_deps.get_llm_client] = lambda: FakeLlm()

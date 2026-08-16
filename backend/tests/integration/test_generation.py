@@ -17,10 +17,8 @@ from src.core.db import SessionLocal
 from src.generation.worker import generate_presentation
 from src.ingestion.service import ingest_source
 from src.main import app
-from src.registry.registration import run_template_registration
-from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, FakePresenton
+from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, catalog_and_approve, usable_pptx_bytes
 
 PROVIDER = {
     "provider": "deepseek",
@@ -28,11 +26,6 @@ PROVIDER = {
     "model": "deepseek-chat",
     "api_key": "sk-x",
 }
-
-
-@pytest.fixture
-def presenton() -> FakePresenton:
-    return FakePresenton()
 
 
 @pytest.fixture
@@ -46,8 +39,7 @@ def on_client() -> FakeOpenNotebook:
 
 
 @pytest.fixture(autouse=True)
-def _wire(presenton, store, on_client):
-    app.dependency_overrides[api_deps.get_presenton_client] = lambda: presenton
+def _wire(store, on_client):
     app.dependency_overrides[api_deps.get_object_store] = lambda: store
     app.dependency_overrides[api_deps.get_open_notebook_client] = lambda: on_client
     app.dependency_overrides[api_deps.get_llm_client] = lambda: FakeLlm()
@@ -61,35 +53,31 @@ def _set_byok(client, seed: Fixtures) -> None:
 
 
 async def _approved_template(client, seed: Fixtures) -> dict:
-    """Create + drive registration to completion (TM-2: async, no manual approve
-    -- TM-4 auto-approves on a successful registration, which needs a PPTX to
-    reach `registered` rather than `no_source`)."""
+    """Create with a real `.pptx`, run LD-2 cataloguing, and review it (L3)
+    -- a template is only `approved` once an admin has reviewed its catalog,
+    not on cataloguing success alone."""
     resp = client.post(
         "/api/v1/templates",
         data={"name": "Brand", "brand_tokens": json.dumps({"primary": "#101010"})},
         files={
             "file": (
                 "brand.pptx",
-                b"PK\x03\x04 fake pptx",
+                usable_pptx_bytes(),
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
         },
         headers=auth(seed.admin_a_sub),
     )
-    assert resp.status_code == 202, resp.text
+    assert resp.status_code == 201, resp.text
     created = resp.json()
-    with SessionLocal() as db:
-        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(created["id"]))
-        await run_template_registration(
-            db=db,
-            template_row_id=row.id,
-            tenant_id=seed.tenant_a,
-            presenton=FakePresenton(),
-            object_store=FakeObjectStore(),
-        )
-        db.commit()
-    listed = client.get("/api/v1/templates", headers=auth(seed.admin_a_sub)).json()
-    return next(t for t in listed if t["id"] == created["id"])
+    approved = await catalog_and_approve(
+        tenant_id=seed.tenant_a,
+        template_logical_id=created["id"],
+        client=client,
+        headers=auth(seed.admin_a_sub),
+    )
+    assert approved["status"] == "approved", approved
+    return approved
 
 
 def _approved_profile(client, seed: Fixtures, template_id: str) -> dict:
@@ -144,20 +132,19 @@ async def _ingest(source_id: str, tenant_id: uuid.UUID, on_client: FakeOpenNoteb
         db.commit()
 
 
-async def _run_generation(generation_id: str, tenant_id: uuid.UUID, presenton, store) -> None:
+async def _run_generation(generation_id: str, tenant_id: uuid.UUID, store) -> None:
     with SessionLocal() as db:
         await generate_presentation(
             db=db,
             generation_id=uuid.UUID(generation_id),
             tenant_id=tenant_id,
-            presenton=presenton,
             object_store=store,
         )
         db.commit()
 
 
 async def test_full_pipeline_to_ready_and_download(
-    client, seed: Fixtures, presenton, store, on_client
+    client, seed: Fixtures, store, on_client
 ) -> None:
     _set_byok(client, seed)
     template = await _approved_template(client, seed)
@@ -185,19 +172,19 @@ async def test_full_pipeline_to_ready_and_download(
     assert gen.status_code == 202, gen.text
     gen_body = gen.json()
     assert gen_body["status"] == "queued"
-    assert "presenton_presentation_id" not in gen_body
+    assert "deck_plan" not in gen_body  # server-side provenance, never exposed
 
     # Run the worker pipeline.
-    await _run_generation(gen_body["id"], seed.tenant_a, presenton, store)
+    await _run_generation(gen_body["id"], seed.tenant_a, store)
 
     detail = client.get(
         f"/api/v1/generations/{gen_body['id']}", headers=auth(seed.author_a_sub)
     ).json()
     assert detail["status"] == "ready"
     assert detail["consistency_report"]["passed"] is True
-    # Presenton returns one file per call; the governed path requests pptx.
+    # Rendering produces one pptx; PDF export is unbuilt (RM-14).
     assert detail["artifacts"] == {"pptx": True, "pdf": False}
-    assert "presenton_presentation_id" not in detail
+    assert "deck_plan" not in detail
     assert "pptx_uri" not in detail
 
     # T-1.5: the deck streams through the API. A presigned MinIO URL names an
@@ -246,7 +233,7 @@ async def test_generation_blocked_until_sources_ready(client, seed: Fixtures) ->
 
 
 async def test_generation_proceeds_from_ready_and_skips_failed_sources(
-    client, seed: Fixtures, presenton, store, on_client
+    client, seed: Fixtures, store, on_client
 ) -> None:
     """A source that FAILED to ingest must not block generation forever — the deck is
     built from the ready sources and the failed one is recorded as skipped."""
@@ -283,7 +270,7 @@ async def test_generation_proceeds_from_ready_and_skips_failed_sources(
         headers=auth(seed.author_a_sub),
     )
     assert gen.status_code == 202, gen.text
-    await _run_generation(gen.json()["id"], seed.tenant_a, presenton, store)
+    await _run_generation(gen.json()["id"], seed.tenant_a, store)
 
     detail = client.get(
         f"/api/v1/generations/{gen.json()['id']}", headers=auth(seed.author_a_sub)

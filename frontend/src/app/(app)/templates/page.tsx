@@ -1,10 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 
 import { useAuth } from "@/components/AuthProvider";
-import { SlideEditorModal } from "@/components/project/SlideEditorModal";
-import { RegistrationBadge } from "@/components/registry/RegistrationBadge";
+import { CatalogReview } from "@/components/registry/CatalogReview";
+import { CatalogStatusBadge } from "@/components/registry/CatalogStatusBadge";
 import { StatusBadge } from "@/components/registry/StatusBadge";
 import { useT } from "@/lib/i18n/LocaleProvider";
 import { api, ApiError, type Template } from "@/services/api";
@@ -16,9 +16,11 @@ import { api, ApiError, type Template } from "@/services/api";
  * stays on the API/model (not deleted -- see TD-07's re-classification), this
  * page just stops presenting a form that implies it does something.
  *
- * TM-4: no manual approve step. A successful registration auto-approves.
- * TM-2: registration is async -- creating/re-registering returns `pending`
- * immediately, so this page polls while anything is still in flight.
+ * LD-3/L3 (Phase C cutover): a template's usable state is entirely
+ * `catalog_status` + `catalog_reviewed` now -- the old geometric
+ * `inspection_status`/`reinspect` (RM-3) is gone. Cataloguing is an async
+ * job (an LLM call cannot be inline), and `status` only becomes `approved`
+ * once an admin reviews the finished catalog.
  */
 export default function TemplatesPage() {
   const { me } = useAuth();
@@ -32,30 +34,14 @@ export default function TemplatesPage() {
   const [busy, setBusy] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState<string | null>(null);
-
-  // Slide Editor Modal
-  const [editorOpen, setEditorOpen] = useState(false);
-  const [activeEditor, setActiveEditor] = useState<{ id: string; url: string } | null>(null);
+  const [recataloguing, setRecataloguing] = useState<string | null>(null);
+  const [reviewingId, setReviewingId] = useState<string | null>(null);
 
   const load = useCallback(() => {
     api.listTemplates().then(setTemplates).catch(() => setTemplates([]));
   }, []);
 
   useEffect(() => load(), [load]);
-
-  // Poll while any template is still registering -- pending is a real in-flight
-  // state now (TM-2), not something that resolves within the request.
-  const pollingRef = useRef(false);
-  useEffect(() => {
-    const hasPending = templates.some((tpl) => tpl.registration_status === "pending");
-    if (!hasPending || pollingRef.current) return;
-    pollingRef.current = true;
-    const timer = setTimeout(() => {
-      pollingRef.current = false;
-      load();
-    }, 2500);
-    return () => clearTimeout(timer);
-  }, [templates, load]);
 
   if (me && me.role !== "admin") {
     return (
@@ -87,6 +73,9 @@ export default function TemplatesPage() {
       await api.createTemplate({ name, brand_tokens: {}, pptx });
       resetForm();
       load();
+      // Cataloguing is async (LD-3) -- the create response never carries a
+      // terminal outcome to check here; `catalog_status` on the reloaded row
+      // (and eventually `catalog_error` if it fails) is the honest signal.
     } catch (err) {
       setError(err instanceof ApiError ? err.message : t("templates.createFailed"));
     } finally {
@@ -94,15 +83,20 @@ export default function TemplatesPage() {
     }
   };
 
-  // Registration happens at creation, so a template registered through a broken
-  // request could never repair itself. This retries from the stored PPTX.
-  const reregister = async (id: string) => {
+  // LD-3: re-run LLM cataloguing against the stored .pptx -- async, so this
+  // only starts the job; `load()` picks up "cataloguing" and the admin polls
+  // by revisiting the page (same posture as reinspect's terminal response,
+  // just delayed by one round trip since an LLM call cannot be inline).
+  const recatalog = async (id: string) => {
     setError(null);
+    setRecataloguing(id);
     try {
-      await api.reregisterTemplate(id);
-      load(); // -> pending; the polling effect above picks up the rest
+      await api.recatalogTemplate(id);
+      load();
     } catch (err) {
-      setError(err instanceof ApiError ? err.message : t("templates.reregisterFailed"));
+      setError(err instanceof ApiError ? err.message : t("catalog.recatalogFailed"));
+    } finally {
+      setRecataloguing(null);
     }
   };
 
@@ -224,8 +218,8 @@ export default function TemplatesPage() {
               <tr>
                 <th className="px-6 py-4">{t("templates.name")}</th>
                 <th className="px-6 py-4">{t("templates.colVersion")}</th>
-                <th className="px-6 py-4">{t("templates.colPptx")}</th>
                 <th className="px-6 py-4">{t("templates.colStatus")}</th>
+                <th className="px-6 py-4">{t("templates.colCatalog")}</th>
                 <th className="px-6 py-4 text-right">{t("templates.colActions")}</th>
               </tr>
             </thead>
@@ -236,55 +230,42 @@ export default function TemplatesPage() {
                     <div className="font-medium text-gray-900 dark:text-gray-100">{tpl.name}</div>
                   </td>
                   <td className="px-6 py-4 text-gray-600 dark:text-gray-400 font-mono">v{tpl.version}</td>
-                  <td className="px-6 py-4 text-gray-600 dark:text-gray-400">
-                    {tpl.has_pptx ? (
-                      <span className="inline-flex items-center gap-1.5 px-2 py-1 rounded-md bg-blue-50 dark:bg-blue-950/60 text-blue-700 dark:text-blue-300 text-xs font-medium border border-blue-200/60 dark:border-blue-800/60">
-                        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="w-3.5 h-3.5">
-                          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                          <polyline points="7 10 12 15 17 10" />
-                          <line x1="12" y1="15" x2="12" y2="3" />
-                        </svg>
-                        Uploaded (.pptx)
-                      </span>
-                    ) : (
-                      <span className="text-gray-400">—</span>
-                    )}
+                  <td className="px-6 py-4">
+                    <StatusBadge status={tpl.status} />
                   </td>
                   <td className="px-6 py-4">
-                    <div className="flex flex-col items-start gap-1.5">
-                      <StatusBadge status={tpl.status} />
-                      <RegistrationBadge status={tpl.registration_status} error={tpl.registration_error} />
-                    </div>
+                    <CatalogStatusBadge
+                      status={tpl.catalog_status}
+                      error={tpl.catalog_error}
+                      reviewed={tpl.catalog_reviewed}
+                    />
                   </td>
                   <td className="px-6 py-4 text-right">
                     <div className="flex items-center justify-end gap-2">
-                      {/* Hidden when the engine holds no template for this row --
-                          previewing would 404, which is what building this URL from
-                          the NoteAI id used to do. */}
-                      {tpl.preview_url && (
+                      {tpl.catalog_status === "ready" && (
                         <button
                           type="button"
-                          onClick={() => {
-                            setActiveEditor({ id: tpl.id, url: tpl.preview_url! });
-                            setEditorOpen(true);
-                          }}
-                          className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 hover:border-blue-500 hover:text-blue-600 transition"
-                          title="Open Presenton interactive drag-and-edit slide canvas"
+                          onClick={() => setReviewingId(tpl.id)}
+                          className={`py-1.5 px-3 text-xs flex items-center gap-1 rounded-lg border transition ${
+                            tpl.catalog_reviewed
+                              ? "btn-secondary"
+                              : "border-amber-400 bg-amber-50 text-amber-800 hover:bg-amber-100 dark:border-amber-800/60 dark:bg-amber-950/40 dark:text-amber-300"
+                          }`}
                         >
-                          <span>🎨 {t("templates.testInEditor")}</span>
+                          {t("catalog.review")}
                         </button>
                       )}
-                      {(tpl.registration_status === "failed" || tpl.registration_status === "no_source") &&
-                        tpl.has_pptx && (
-                          <button
-                            type="button"
-                            onClick={() => reregister(tpl.id)}
-                            className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 border-amber-400 text-amber-700 hover:bg-amber-50 dark:text-amber-300"
-                            title={tpl.registration_error ?? "Retry registering this template with the slide engine"}
-                          >
-                            <span>↻ {t("templates.reregister")}</span>
-                          </button>
-                        )}
+                      {tpl.catalog_status === "failed" && tpl.has_pptx && (
+                        <button
+                          type="button"
+                          onClick={() => recatalog(tpl.id)}
+                          disabled={recataloguing === tpl.id}
+                          className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 border-red-300 text-red-700 hover:bg-red-50 dark:text-red-300 disabled:opacity-50"
+                          title={tpl.catalog_error ?? undefined}
+                        >
+                          ↻ {recataloguing === tpl.id ? t("catalog.recataloguing") : t("catalog.recatalog")}
+                        </button>
+                      )}
                       <button
                         type="button"
                         onClick={() => deleteTemplate(tpl.id)}
@@ -326,15 +307,16 @@ export default function TemplatesPage() {
         </div>
       </div>
 
-      <SlideEditorModal
-        isOpen={editorOpen}
-        onClose={() => setEditorOpen(false)}
-        title="🎨 Interactive Template & Slide Editor"
-        subtitle={`Testing drag-and-edit layout components for template reference (${activeEditor?.id.slice(0, 8)}...)`}
-        // Backend-composed from the ENGINE template id. Building it from the NoteAI
-        // logical_id sent Presenton a UUID it had never seen -- "Template not found".
-        editorUrl={activeEditor?.url}
-      />
+      {reviewingId && (
+        <CatalogReview
+          templateId={reviewingId}
+          onDone={() => {
+            setReviewingId(null);
+            load();
+          }}
+          onCancel={() => setReviewingId(null)}
+        />
+      )}
     </section>
   );
 }

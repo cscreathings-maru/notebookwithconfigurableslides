@@ -21,6 +21,7 @@ _TASK_BY_TYPE: dict[JobType, str] = {
     JobType.ingest: "run_ingest",
     JobType.generate: "run_generate",
     JobType.register_template: "run_register_template",
+    JobType.catalog_template: "run_catalog_template",
 }
 
 

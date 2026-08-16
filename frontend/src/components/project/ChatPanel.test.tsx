@@ -248,6 +248,23 @@ describe("ChatPanel generation trigger (DG-1/DG-2: outline-first)", () => {
   it("requires building and confirming an outline before anything is generated", async () => {
     // Arrange
     const user = userEvent.setup();
+    // RM-11: a template is mandatory -- rendering fills its own layouts, so
+    // the build action is gated on one. A single ready template auto-selects,
+    // which is what an ordinary chat user hits.
+    vi.spyOn(api, "listTemplates").mockResolvedValue([
+      {
+        id: "tpl-good",
+        version: 1,
+        name: "Corporate",
+        brand_tokens: {},
+        status: "approved",
+        has_pptx: true,
+        catalog_status: "ready",
+        catalog_error: null,
+        catalog_reviewed: true,
+        created_at: new Date().toISOString(),
+      },
+    ] as never);
     const buildOutline = vi
       .spyOn(api, "buildFreeformOutline")
       .mockResolvedValue(FAKE_OUTLINE as never);

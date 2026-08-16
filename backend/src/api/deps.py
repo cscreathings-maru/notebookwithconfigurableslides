@@ -17,8 +17,6 @@ from ..chat.service import ChatService
 from ..core.db import get_db
 from ..engines.llm import LlmClient
 from ..engines.open_notebook import OpenNotebookClient
-from ..engines.presenton import PresentonClient
-from ..generation.freeform_service import FreeformGenerationService
 from ..generation.repository import GenerationRepository
 from ..generation.service import GenerationService
 from ..guide.repository import GuideRepository
@@ -40,10 +38,6 @@ from ..storage.object_store import ObjectStore, get_object_store as _get_object_
 
 def get_open_notebook_client() -> OpenNotebookClient:
     return OpenNotebookClient()
-
-
-def get_presenton_client() -> PresentonClient:
-    return PresentonClient()
 
 
 def get_llm_client() -> LlmClient:
@@ -142,17 +136,10 @@ def get_registry_usage(
 def get_template_service(
     repo: TemplateRepository = Depends(get_template_repository),
     usage: RegistryUsage = Depends(get_registry_usage),
-    presenton: PresentonClient = Depends(get_presenton_client),
     object_store: ObjectStore = Depends(get_object_store),
     job_service: JobService = Depends(get_job_service),
 ) -> TemplateService:
-    return TemplateService(
-        repo=repo,
-        usage=usage,
-        presenton=presenton,
-        object_store=object_store,
-        job_service=job_service,
-    )
+    return TemplateService(repo=repo, usage=usage, object_store=object_store, job_service=job_service)
 
 
 def get_profile_service(
@@ -237,6 +224,11 @@ def get_generation_service(
     source_repo: SourceRepository = Depends(get_source_repository),
     profile_repo: ProfileRepository = Depends(get_profile_repository),
     template_repo: TemplateRepository = Depends(get_template_repository),
+    project_repo: ProjectRepository = Depends(get_project_repository),
+    guide_repo: GuideRepository = Depends(get_guide_repository),
+    chat_repo: ChatRepository = Depends(get_chat_repository),
+    on_client: OpenNotebookClient = Depends(get_open_notebook_client),
+    llm: LlmClient = Depends(get_llm_client),
     job_service: JobService = Depends(get_job_service),
     alert_sink: AlertSink = Depends(get_alert_sink),
 ) -> GenerationService:
@@ -246,30 +238,9 @@ def get_generation_service(
         source_repo=source_repo,
         profile_repo=profile_repo,
         template_repo=template_repo,
-        job_service=job_service,
-        alert_sink=alert_sink,
-    )
-
-
-def get_freeform_generation_service(
-    gen_repo: GenerationRepository = Depends(get_generation_repository),
-    project_repo: ProjectRepository = Depends(get_project_repository),
-    source_repo: SourceRepository = Depends(get_source_repository),
-    guide_repo: GuideRepository = Depends(get_guide_repository),
-    chat_repo: ChatRepository = Depends(get_chat_repository),
-    template_repo: TemplateRepository = Depends(get_template_repository),
-    on_client: OpenNotebookClient = Depends(get_open_notebook_client),
-    llm: LlmClient = Depends(get_llm_client),
-    job_service: JobService = Depends(get_job_service),
-    alert_sink: AlertSink = Depends(get_alert_sink),
-) -> FreeformGenerationService:
-    return FreeformGenerationService(
-        gen_repo=gen_repo,
         project_repo=project_repo,
-        source_repo=source_repo,
         guide_repo=guide_repo,
         chat_repo=chat_repo,
-        template_repo=template_repo,
         on_client=on_client,
         llm=llm,
         job_service=job_service,

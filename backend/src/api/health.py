@@ -8,10 +8,14 @@ Registered twice, deliberately:
 - at the root (`/healthz`, `/readyz`) for container probes, which talk to the process
   directly and never traverse the proxy.
 
-`/readyz` reports **per dependency**. A Presenton outage means decks cannot render; it
-does not mean the orchestrator is dead, and a probe that conflates the two removes a
-service that is still serving most of its API. Only Postgres — the system of record —
-can make the whole service `unready`.
+`/readyz` reports **per dependency**. An Open Notebook outage means ingestion and
+grounded chat degrade; it does not mean the orchestrator is dead, and a probe that
+conflates the two removes a service that is still serving most of its API. Only
+Postgres — the system of record — can make the whole service `unready`.
+
+Deck rendering is deliberately absent from this list: it runs in-process
+(`deck/renderer.py`, RM-11) with no network dependency, so there is nothing to
+probe. If this process is up, decks can render.
 """
 
 from __future__ import annotations
@@ -69,7 +73,7 @@ async def _check_http(url: str) -> dict[str, str]:
     """Any HTTP answer means the dependency is listening — including a 4xx."""
     # A URL without a scheme raises httpx.UnsupportedProtocol, which reads as though the
     # dependency is down when in fact the *configuration* is wrong. That happened on the
-    # production deployment: Presenton was healthy and reported `down`. Name the real
+    # production deployment: a healthy engine reported `down`. Name the real
     # cause rather than making an operator debug a service that is fine.
     if not url.startswith(("http://", "https://")):
         return {
@@ -89,18 +93,16 @@ async def _check_http(url: str) -> dict[str, str]:
 async def _dependencies() -> dict[str, dict[str, str]]:
     """Probe every dependency concurrently; a slow one must not serialise the rest."""
     settings = get_settings()
-    redis, minio, open_notebook, presenton = await asyncio.gather(
+    redis, minio, open_notebook = await asyncio.gather(
         _check_redis(),
         _check_http(f"{settings.minio_endpoint.rstrip('/')}/minio/health/live"),
         _check_http(f"{settings.open_notebook_url.rstrip('/')}/health"),
-        _check_http(f"{settings.presenton_url.rstrip('/')}/"),
     )
     return {
         _CRITICAL: _check_postgres(),
         "redis": redis,
         "minio": minio,
         "open_notebook": open_notebook,
-        "presenton": presenton,
     }
 
 

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { useOptionalAuth } from "@/components/AuthProvider";
 import { localeToLanguageName } from "@/lib/i18n/config";
 import { useLocale, useT } from "@/lib/i18n/LocaleProvider";
 import type { MessageKey } from "@/lib/i18n/messages/en";
@@ -73,6 +74,10 @@ export function OutlineBuilderCard({
 }: OutlineBuilderCardProps) {
   const t = useT();
   const { locale } = useLocale();
+  // Only softens the no-template message; `null` (no provider) reads as
+  // not-an-admin, which is the safe direction -- it shows "ask an admin"
+  // rather than linking somewhere the user may not be allowed to go.
+  const isAdmin = useOptionalAuth()?.me?.role === "admin";
   const [phase, setPhase] = useState<Phase>("setup");
   // Grounded in the turn it was opened from, when there is one; otherwise the
   // user picks (Studio, or chat's bare ＋/`/generate` with no message context).
@@ -90,8 +95,6 @@ export function OutlineBuilderCard({
   const [nSlidesHint, setNSlidesHint] = useState("");
   const [language, setLanguage] = useState<string>(localeToLanguageName[locale]);
   const [model, setModel] = useState<string>("");
-  const [webSearch, setWebSearch] = useState(false);
-  const [exportAs, setExportAs] = useState<"pptx" | "pdf">("pptx");
   const [languages, setLanguages] = useState<LanguageOption[]>([]);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [showAdvanced, setShowAdvanced] = useState(false);
@@ -101,8 +104,18 @@ export function OutlineBuilderCard({
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    // DG-3.1: only templates the engine actually accepted change anything.
-    api.listTemplates().then((all) => setTemplates(all.filter(isSelectableTemplate))).catch(() => {});
+    // Only templates a deck can actually be rendered from (RM-3).
+    api
+      .listTemplates()
+      .then((all) => {
+        const usable = all.filter(isSelectableTemplate);
+        setTemplates(usable);
+        // A template is mandatory now, so preselect when there is no real
+        // choice to make -- forcing a click through a list of one is friction
+        // with no decision behind it.
+        if (usable.length === 1) setTemplateId(usable[0].id);
+      })
+      .catch(() => {});
     api
       .listModels()
       .then((m) => {
@@ -196,8 +209,6 @@ export function OutlineBuilderCard({
         language: language || undefined,
         template_id: templateId || undefined,
         model: model || undefined,
-        web_search: webSearch,
-        export_as: exportAs,
       });
       onGenerated(generation);
     } catch (err) {
@@ -283,76 +294,61 @@ export function OutlineBuilderCard({
           ))}
         </select>
       </label>
-      <label className="flex flex-col gap-1 text-[11px] font-medium uppercase tracking-wide text-gray-500">
-        {t("studio.output")}
-        <select
-          value={exportAs}
-          onChange={(e) => setExportAs(e.target.value as "pptx" | "pdf")}
-          className="rounded-lg border border-gray-200 bg-white px-2 py-1.5 text-sm text-gray-800 focus:border-accent focus:outline-none"
-        >
-          <option value="pptx">PPTX</option>
-          <option value="pdf">PDF</option>
-        </select>
-      </label>
-      <label className="col-span-3 flex items-center gap-2 text-xs text-gray-700">
-        <input
-          type="checkbox"
-          checked={webSearch}
-          onChange={(e) => setWebSearch(e.target.checked)}
-          className="h-4 w-4 rounded border-gray-300 text-accent focus:ring-accent"
-        />
-        <span className="font-medium">{t("studio.webSearch")}</span>
-      </label>
+      {/* No output-format select: PDF export is not built yet (RM-14) and the
+          backend refuses it, so offering it produced a 422 at the very last
+          step. No web-search toggle either -- the backend dropped the field,
+          so it silently did nothing. */}
     </div>
   );
 
+  /* There is no "default theme" option any more, and offering one would be a
+     lie: rendering fills the chosen template's own layouts, so a generation
+     without a template is refused outright by the backend (RM-11). An empty
+     picker is therefore a blocking state, and says so rather than letting the
+     user reach Generate and collect a 422. */
   const templatePicker = (
     <div className="mb-3">
       <span className="mb-1.5 block text-[11px] font-medium uppercase tracking-wide text-gray-500">
-        {t("studio.template")}
+        {t("studio.template")} <span className="text-red-500">*</span>
       </span>
-      <div className="flex gap-2 overflow-x-auto pb-1">
-        <button
-          type="button"
-          onClick={() => setTemplateId("")}
-          className={`shrink-0 rounded-lg border px-3 py-2 text-xs font-medium transition-colors ${
-            templateId === ""
-              ? "border-accent bg-accent/10 text-accent"
-              : "border-gray-200 bg-white text-gray-600 hover:border-accent/50"
-          }`}
+
+      {templates.length === 0 ? (
+        <div
+          role="note"
+          className="rounded-lg border border-dashed border-amber-300 bg-amber-50/60 p-3 text-xs text-amber-800"
         >
-          {t("studio.defaultTheme")}
-        </button>
-        {templates.map((tpl) => (
-          <button
-            key={tpl.id}
-            type="button"
-            onClick={() => setTemplateId(tpl.id)}
-            className={`flex shrink-0 flex-col items-center gap-1 rounded-lg border p-1.5 text-xs font-medium transition-colors ${
-              templateId === tpl.id
-                ? "border-accent bg-accent/10 text-accent"
-                : "border-gray-200 bg-white text-gray-600 hover:border-accent/50"
-            }`}
-          >
-            {tpl.thumbnail_urls[0] ? (
-              // eslint-disable-next-line @next/next/no-img-element -- same-origin
-              // engine-hosted preview, not an asset Next's optimizer needs to touch.
-              <img
-                src={tpl.thumbnail_urls[0]}
-                alt=""
-                className="h-12 w-20 rounded object-cover"
-              />
-            ) : (
-              <span className="flex h-12 w-20 items-center justify-center rounded bg-gray-100 text-gray-400">
-                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="h-5 w-5">
-                  <rect x="3" y="3" width="18" height="18" rx="2" />
-                </svg>
-              </span>
-            )}
-            <span className="max-w-[80px] truncate">{tpl.name}</span>
-          </button>
-        ))}
-      </div>
+          <p className="font-medium">{t("studio.noTemplates")}</p>
+          <p className="mt-1 leading-relaxed">{t("studio.noTemplatesHint")}</p>
+          {/* Role-aware: /templates is admin-only, so pointing an author at it
+              sends them to a page that just says "managed by admins". They need
+              to know who to ask, not where to click. */}
+          {isAdmin ? (
+            <a href="/templates" className="mt-2 inline-block font-medium text-accent hover:underline">
+              {t("studio.goToTemplates")} →
+            </a>
+          ) : (
+            <p className="mt-2 font-medium">{t("studio.askAdminForTemplate")}</p>
+          )}
+        </div>
+      ) : (
+        <div className="flex gap-2 overflow-x-auto pb-1">
+          {templates.map((tpl) => (
+            <button
+              key={tpl.id}
+              type="button"
+              onClick={() => setTemplateId(tpl.id)}
+              aria-pressed={templateId === tpl.id}
+              className={`flex w-32 shrink-0 flex-col gap-1 rounded-lg border p-2 text-left text-xs font-medium transition-colors ${
+                templateId === tpl.id
+                  ? "border-accent bg-accent/10 text-accent"
+                  : "border-gray-200 bg-white text-gray-600 hover:border-accent/50"
+              }`}
+            >
+              <span className="truncate">{tpl.name}</span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -426,12 +422,18 @@ export function OutlineBuilderCard({
         )}
 
         <div className="flex items-center gap-2">
-          <button type="submit" disabled={busy} className="btn-primary text-sm">
+          {/* Gated on a template here, at the START of the flow, rather than
+              letting someone build and review an outline and only then find
+              out the deck cannot be rendered. */}
+          <button type="submit" disabled={busy || !templateId} className="btn-primary text-sm">
             {phase === "building" ? t("outline.building") : t("outline.buildOutline")}
           </button>
           <button type="button" onClick={onCancel} disabled={busy} className="btn-secondary text-sm">
             {t("common.cancel")}
           </button>
+          {!templateId && templates.length > 0 && (
+            <span className="text-[11px] text-gray-500">{t("studio.pickTemplateFirst")}</span>
+          )}
         </div>
       </form>
     );

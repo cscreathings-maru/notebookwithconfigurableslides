@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 from ..core.db import SessionLocal
-from ..core.errors import NotFoundError
+from ..core.errors import NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..engines.open_notebook import OpenNotebookClient
 from ..ingestion.repository import SourceRepository
@@ -122,11 +122,23 @@ def _finish_job(
     db.commit()
 
 
-async def run_register_template(
+async def run_catalog_template(
     ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any
 ) -> None:
-    from ..engines.presenton import PresentonClient
-    from ..registry.registration import run_template_registration
+    """LD-3: `deck/dump.py` -> `deck/catalog.py::catalog_template` -> `Template.slide_catalog`.
+
+    Mirrors `run_ingest`'s shape: the engine client (here `LlmClient`) is
+    constructed directly, not via FastAPI DI, since Arq tasks run outside the
+    request/response cycle. A malformed-content outcome (`ValidationError` --
+    e.g. no usable design in the whole template) is TERMINAL and recorded on
+    the row; anything else (a transient LLM/network failure) propagates so
+    Arq retries, matching `run_ingest`'s own transient-vs-terminal split.
+    """
+    from ..deck.catalog import catalog_template
+    from ..deck.dump import dump_presentation
+    from ..engines.llm import LlmClient
+    from ..registry.repository import TemplateRepository
+    from ..registry.service import apply_catalog_result
 
     job_uuid = uuid.UUID(job_id)
     tenant_uuid = uuid.UUID(tenant_id)
@@ -136,7 +148,7 @@ async def run_register_template(
         template_row_id = job.ref_id
         job.status = JobStatus.running
         job.attempts += 1
-        job.progress = {"step": "registering", "percent": 10}
+        job.progress = {"step": "cataloguing", "percent": 10}
         db.add(job)
         db.commit()
 
@@ -144,27 +156,55 @@ async def run_register_template(
             _finish_job(db, job_uuid, tenant_uuid, JobStatus.failed, "Job has no template ref.")
             return
 
-        try:
-            await run_template_registration(
-                db=db,
-                template_row_id=template_row_id,
-                tenant_id=tenant_uuid,
-                presenton=PresentonClient(),
-                object_store=get_object_store(),
+        template = TemplateRepository(db, tenant_uuid).get_or_none(template_row_id)
+        if template is None or not template.source_pptx_uri:
+            _finish_job(
+                db, job_uuid, tenant_uuid, JobStatus.failed, "Template row or its .pptx is missing."
             )
+            return
+
+        llm_config = TenantLlmConfigService(db, tenant_uuid)
+        try:
+            provider_config = llm_config.get_config()
+        except NotFoundError:
+            apply_catalog_result(template, catalog=None, error="No LLM provider configured for tenant.")
+            db.add(template)
             db.commit()
+            _finish_job(db, job_uuid, tenant_uuid, JobStatus.failed, "No LLM provider configured.")
+            return
+
+        pptx_bytes = get_object_store().get_bytes(key=template.source_pptx_uri)
+        dumps = dump_presentation(pptx_bytes)
+
+        try:
+            catalog, usage = await catalog_template(
+                dumps=dumps,
+                llm=LlmClient(),
+                provider_config=provider_config,
+                model_override=llm_config.model_for("deck_catalog"),
+            )
+        except ValidationError as exc:
+            apply_catalog_result(template, catalog=None, error=str(exc))
+            db.add(template)
+            db.commit()
+            _finish_job(db, job_uuid, tenant_uuid, JobStatus.failed, str(exc))
+            return
         except Exception as exc:  # transient engine/transport error -> let Arq retry
             db.rollback()
-            logger.warning(
-                "register_template_retryable_error", extra={"job_id": job_id, "error": str(exc)}
-            )
+            logger.warning("catalog_template_retryable_error", extra={"job_id": job_id, "error": str(exc)})
             raise
 
+        apply_catalog_result(template, catalog=catalog, error=None)
+        db.add(template)
+        db.commit()
+        logger.info(
+            "catalog_template_finished",
+            extra={"template_id": str(template.logical_id), "tokens_in": usage.tokens_in, "tokens_out": usage.tokens_out},
+        )
         _finish_job(db, job_uuid, tenant_uuid, JobStatus.succeeded, None)
 
 
 async def run_generate(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: Any, **kwargs: Any) -> None:
-    from ..engines.presenton import PresentonClient
     from ..generation.worker import generate_presentation
 
     job_uuid = uuid.UUID(job_id)
@@ -188,11 +228,10 @@ async def run_generate(ctx: dict[str, Any], job_id: str, tenant_id: str, *args: 
                 db=db,
                 generation_id=generation_id,
                 tenant_id=tenant_uuid,
-                presenton=PresentonClient(),
                 object_store=get_object_store(),
             )
             db.commit()
-        except Exception as exc:  # transient engine/transport error -> let Arq retry
+        except Exception as exc:  # transient storage/transport error -> let Arq retry
             db.rollback()
             logger.warning("generate_retryable_error", extra={"job_id": job_id, "error": str(exc)})
             raise

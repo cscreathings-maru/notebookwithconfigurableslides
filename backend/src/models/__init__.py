@@ -8,10 +8,10 @@ from .job import Job, JobStatus, JobType
 from .outline import Outline
 from .project import Project
 from .registry import (
-    RegistrationStatus,
     RegistryStatus,
     StakeholderProfile,
     Template,
+    TemplateCatalogStatus,
     Tone,
     Verbosity,
 )
@@ -36,7 +36,7 @@ __all__ = [
     "SourceStatus",
     "StakeholderProfile",
     "Template",
-    "RegistrationStatus",
+    "TemplateCatalogStatus",
     "RegistryStatus",
     "Tone",
     "Verbosity",

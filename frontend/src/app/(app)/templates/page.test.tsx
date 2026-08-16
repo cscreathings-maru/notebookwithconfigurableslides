@@ -22,17 +22,16 @@ vi.mock("@/components/AuthProvider", () => ({
   }),
 }));
 
-const REGISTERED = {
+const READY = {
   id: "tpl-1",
   version: 1,
   name: "Corporate",
   brand_tokens: {},
   status: "approved",
   has_pptx: true,
-  registration_status: "registered",
-  registration_error: null,
-  preview_url: "/editor/template-preview?id=x",
-  thumbnail_urls: ["/app_data/x.png"],
+  catalog_status: "ready",
+  catalog_error: null,
+  catalog_reviewed: true,
   created_at: new Date().toISOString(),
 };
 
@@ -86,7 +85,7 @@ describe("no brand-token configurator (TM-6)", () => {
 describe("no manual approve step (TM-4)", () => {
   it("never renders an Approve button", async () => {
     // Arrange
-    vi.spyOn(api, "listTemplates").mockResolvedValue([REGISTERED] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([READY] as never);
 
     // Act
     renderPage();
@@ -100,7 +99,7 @@ describe("no manual approve step (TM-4)", () => {
 describe("delete requires a second confirming click (TM-5)", () => {
   it("does not delete on the first click", async () => {
     // Arrange
-    vi.spyOn(api, "listTemplates").mockResolvedValue([REGISTERED] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([READY] as never);
     const del = vi.spyOn(api, "deleteTemplate").mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderPage();
@@ -116,7 +115,7 @@ describe("delete requires a second confirming click (TM-5)", () => {
 
   it("deletes on the second click", async () => {
     // Arrange
-    vi.spyOn(api, "listTemplates").mockResolvedValue([REGISTERED] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([READY] as never);
     const del = vi.spyOn(api, "deleteTemplate").mockResolvedValue(undefined);
     const user = userEvent.setup();
     renderPage();
@@ -132,7 +131,7 @@ describe("delete requires a second confirming click (TM-5)", () => {
 
   it("surfaces the 409 in-use message instead of failing silently", async () => {
     // Arrange
-    vi.spyOn(api, "listTemplates").mockResolvedValue([REGISTERED] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([READY] as never);
     vi.spyOn(api, "deleteTemplate").mockRejectedValue(
       new ApiError(409, "version_in_use", "This template is used by an existing generation and cannot be deleted."),
     );
@@ -152,19 +151,72 @@ describe("delete requires a second confirming click (TM-5)", () => {
   });
 });
 
-describe("registration status badges (TM-3)", () => {
-  it("shows a pending badge, not the removed fallback wording", async () => {
+describe("catalog status badges (LD-3/LD-4)", () => {
+  it("a reviewed, ready template shows both catalog-ready and reviewed", async () => {
     // Arrange
+    vi.spyOn(api, "listTemplates").mockResolvedValue([READY] as never);
+
+    // Act
+    renderPage();
+    await screen.findByText("Corporate");
+
+    // Assert
+    expect(await screen.findByText(/Catalog ready|Katalog siap/)).toBeInTheDocument();
+    expect(screen.getByText(/Reviewed|Sudah ditinjau/)).toBeInTheDocument();
+  });
+
+  it("a failed catalog shows the cataloguing error inline", async () => {
+    // Arrange -- the reason was previously tooltip-only on the old inspection
+    // badge, which is how a whole class of failure went unnoticed for months.
     vi.spyOn(api, "listTemplates").mockResolvedValue([
-      { ...REGISTERED, id: "tpl-2", status: "draft", registration_status: "pending", preview_url: null },
+      {
+        ...READY,
+        id: "tpl-2",
+        status: "draft",
+        catalog_status: "failed",
+        catalog_error: "LLM returned an unparseable design catalog.",
+        catalog_reviewed: false,
+      },
     ] as never);
 
     // Act
     renderPage();
     await screen.findByText("Corporate");
 
-    // Assert -- scoped to the badge itself; the page subtitle also happens to
-    // contain "mendaftarkan" in this locale's copy.
-    expect(screen.getByText(/^Registering…$|^Mendaftarkan…$/)).toBeInTheDocument();
+    // Assert
+    expect(
+      screen.getByText(/LLM returned an unparseable design catalog/),
+    ).toBeInTheDocument();
+  });
+
+  it("offers re-catalogue on a failed template that still has its .pptx", async () => {
+    // Arrange
+    vi.spyOn(api, "listTemplates").mockResolvedValue([
+      { ...READY, catalog_status: "failed", catalog_error: "nope", catalog_reviewed: false },
+    ] as never);
+
+    // Act
+    renderPage();
+    await screen.findByText("Corporate");
+
+    // Assert
+    expect(
+      screen.getByRole("button", { name: /Re-catalogue|Buat ulang katalog/i }),
+    ).toBeInTheDocument();
+  });
+
+  it("offers review, not re-catalogue, on a healthy template", async () => {
+    // Arrange
+    vi.spyOn(api, "listTemplates").mockResolvedValue([READY] as never);
+
+    // Act
+    renderPage();
+    await screen.findByText("Corporate");
+
+    // Assert
+    expect(
+      screen.queryByRole("button", { name: /Re-catalogue|Buat ulang katalog/i }),
+    ).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Review catalog|Tinjau katalog/i })).toBeInTheDocument();
   });
 });

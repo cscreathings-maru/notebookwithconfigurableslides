@@ -11,7 +11,48 @@ import uuid
 from src.generation.artifact import inspect_pptx
 from src.generation.consistency import check_consistency
 from src.models import StakeholderProfile, Tone, Verbosity
-from tests.fakes import _pptx_from_markdown
+
+
+def _pptx_from_markdown(content: str, slides_markdown, n_slides: int) -> bytes:
+    """Build a REAL PPTX so the artifact-level consistency checker has a genuine
+    deck to inspect: a title slide plus one slide per `## ` heading with its
+    `- ` bullets as body text, padded to `n_slides`.
+
+    Lived in `tests/fakes.py` while it modelled the slide engine's output; the
+    engine is gone (RM-13) and this is now simply a fixture builder for the one
+    suite that needs arbitrary deck shapes, so it lives with its only caller.
+    """
+    import io
+
+    from pptx import Presentation
+
+    prs = Presentation()
+    title_layout = prs.slide_layouts[0]
+    body_layout = prs.slide_layouts[1]
+
+    title_slide = prs.slides.add_slide(title_layout)
+    title_slide.shapes.title.text = content or "Presentation"
+
+    blocks = slides_markdown if isinstance(slides_markdown, list) else [slides_markdown or ""]
+    current_body = None
+    for raw in "\n".join(blocks).splitlines():
+        line = raw.strip()
+        if line.startswith("## "):
+            slide = prs.slides.add_slide(body_layout)
+            slide.shapes.title.text = line[3:].strip()
+            current_body = slide.placeholders[1].text_frame
+            current_body.text = ""
+        elif line.startswith("- ") and current_body is not None:
+            para = current_body.add_paragraph()
+            para.text = line[2:].strip()
+
+    while len(prs.slides) < max(n_slides, 1):
+        filler = prs.slides.add_slide(body_layout)
+        filler.shapes.title.text = "Appendix"
+
+    buffer = io.BytesIO()
+    prs.save(buffer)
+    return buffer.getvalue()
 
 
 def _profile(slide_min: int = 4, slide_max: int = 12) -> StakeholderProfile:

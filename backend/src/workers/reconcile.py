@@ -35,6 +35,7 @@ logger = get_logger("orchestrator.worker")
 _TASK_BY_TYPE: dict[JobType, str] = {
     JobType.ingest: "run_ingest",
     JobType.generate: "run_generate",
+    JobType.catalog_template: "run_catalog_template",
 }
 
 # A job that has never been attempted and is still `queued` has no Redis entry to lose —

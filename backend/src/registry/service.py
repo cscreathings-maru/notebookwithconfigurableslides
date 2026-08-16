@@ -5,8 +5,11 @@ Rules enforced here:
 - A profile/template version referenced by any Generation is frozen: its status
   cannot be transitioned (approve/archive) — attempts raise VersionInUseError (409).
 - Profiles must bind an APPROVED template version (governance gate).
-- Template names sent to Presenton are tenant-namespaced; the engine ref is stored
-  but never exposed.
+- A template's usable state is `catalog_status` + `catalog_reviewed_at` (LD-2/
+  LD-3/L3) -- an LLM reads the uploaded `.pptx` as a design catalog (async,
+  a job, never inline) and an admin reviews it once before the template can
+  be approved. Replaces `inspection_status`/`deck/inspect.py`'s synchronous
+  geometric read entirely (Phase C cutover, `PLAN-LLM-DECK-PLANNING.md` LD-9).
 """
 
 from __future__ import annotations
@@ -16,31 +19,52 @@ from typing import Any
 
 from ..core.errors import ConflictError, NotFoundError, ValidationError
 from ..core.logging import get_logger
+from ..deck.catalog import DesignCatalog
 from ..jobs.service import JobService
 from ..metering.service import MeteringService
 from ..models import (
     JobType,
-    RegistrationStatus,
     RegistryStatus,
     StakeholderProfile,
     Template,
-    Tenant,
+    TemplateCatalogStatus,
     Tone,
     Verbosity,
 )
+from ..models.base import utcnow
 from ..storage.object_store import ObjectStore
 from .repository import ProfileRepository, RegistryUsage, TemplateRepository
 
 logger = get_logger("orchestrator.registry")
+
+_PPTX_MEDIA_TYPE = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
 
 
 class VersionInUseError(ConflictError):
     code = "version_in_use"
 
 
-def tenant_namespace(db, tenant_id: uuid.UUID) -> str:
-    tenant = db.get(Tenant, tenant_id)
-    return tenant.slug if tenant else tenant_id.hex
+def apply_catalog_result(template: Template, *, catalog: DesignCatalog | None, error: str | None) -> None:
+    """Persist an LD-2 cataloguing outcome onto `template` in place -- the
+    worker-side counterpart to `_apply_inspection` (`workers/tasks.py::
+    run_catalog_template`), called once the async cataloguing job has run.
+
+    Never called inline with `create`: an LLM call belongs in a job, not a
+    request/response cycle (`TemplateCatalogStatus.cataloguing`'s docstring).
+    """
+    if error is not None:
+        template.slide_catalog = None
+        template.catalog_status = TemplateCatalogStatus.failed
+        template.catalog_error = error
+        return
+    template.slide_catalog = catalog.model_dump(mode="json") if catalog is not None else None
+    template.catalog_status = TemplateCatalogStatus.ready
+    template.catalog_error = None
+    # A fresh (or re-run) catalog is unreviewed until an admin looks at it
+    # again (L3) -- carrying a stale review forward across a re-catalogue
+    # would silently approve content nobody has seen.
+    template.catalog_reviewed_at = None
+    template.catalog_reviewed_by = None
 
 
 class TemplateService:
@@ -49,15 +73,21 @@ class TemplateService:
         *,
         repo: TemplateRepository,
         usage: RegistryUsage,
-        presenton,
         object_store: ObjectStore,
         job_service: JobService,
     ):
         self.repo = repo
         self.usage = usage
-        self.presenton = presenton
         self.object_store = object_store
         self.job_service = job_service
+
+    async def _dispatch_cataloguing(self, template: Template) -> None:
+        job, _ = self.job_service.create(
+            job_type=JobType.catalog_template,
+            idempotency_key=f"catalog_template:{template.id}",
+            ref_id=template.id,
+        )
+        await self.job_service.commit_and_dispatch(job)
 
     async def create(
         self,
@@ -68,14 +98,14 @@ class TemplateService:
         pptx_content: bytes | None,
         created_by: uuid.UUID,
     ) -> Template:
-        """Store the row and dispatch registration; does not wait for it (TM-2).
+        """Store the row and enqueue LD-2 cataloguing.
 
-        Registration is `POST /template/async` on the engine side -- layout
-        generation for every slide, running in parallel, that can take minutes.
-        Blocking this request on it is the reason there was never a progress
-        state: a registering template was indistinguishable from a failed one.
-        The row starts `pending` (the model's own default) and the worker
-        (`registry/registration.py`) drives it to a terminal state.
+        Cataloguing is NOT inline: it is an LLM call over the whole deck, so
+        it runs as a job (LD-3) -- the response carries `catalog_status:
+        "cataloguing"`, not a terminal outcome, when a PPTX was uploaded.
+        The template stays `draft`/unapproved until an admin reviews the
+        finished catalog (`review_catalog`) -- there is no auto-approve
+        anymore (L3: a catalog nobody has seen is not yet trustworthy).
         """
         logical_id = uuid.uuid4()
         source_pptx_uri: str | None = None
@@ -87,13 +117,7 @@ class TemplateService:
                 source_id=logical_id.hex,
                 filename=pptx_filename,
             )
-            self.object_store.put_bytes(
-                key=key,
-                data=pptx_content,
-                content_type=(
-                    "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-                ),
-            )
+            self.object_store.put_bytes(key=key, data=pptx_content, content_type=_PPTX_MEDIA_TYPE)
             source_pptx_uri = key
 
         template = Template(
@@ -103,74 +127,98 @@ class TemplateService:
             source_pptx_uri=source_pptx_uri,
             brand_tokens=brand_tokens,
             status=RegistryStatus.draft,
-            registration_status=RegistrationStatus.pending,
+            catalog_status=(
+                TemplateCatalogStatus.cataloguing if pptx_content is not None else TemplateCatalogStatus.no_source
+            ),
             created_by=created_by,
         )
         self.repo.add(template)
-        self.repo.db.flush()  # need template.id for the job's ref_id
+        self.repo.db.flush()
         self._audit("template.created", template, created_by)
-
-        job, _ = self.job_service.create(
-            job_type=JobType.register_template,
-            idempotency_key=f"register_template:{template.id}",
-            ref_id=template.id,
+        logger.info(
+            "template_created",
+            extra={"template_id": str(logical_id), "catalog_status": template.catalog_status.value},
         )
-        await self.job_service.commit_and_dispatch(job)
 
-        logger.info("template_created_registration_queued", extra={"template_id": str(logical_id)})
+        if pptx_content is not None:
+            await self._dispatch_cataloguing(template)
+
         return template
 
-    async def reregister(
-        self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None
-    ) -> Template:
-        """Re-queue engine registration for an existing template, from its stored PPTX.
-
-        Registration previously happened only at creation, so a template registered
-        through a broken request could never repair itself -- the operator's only route
-        was re-uploading the same deck under a new name. The PPTX is already in object
-        storage, so nothing needs re-uploading from the browser.
-
-        Deliberately does NOT create a new version: the template's content is unchanged.
-        What changes is the engine ref, which was never user-visible and was wrong.
-        Async (TM-2), same as `create` -- resets to `pending` and returns immediately;
-        the caller polls the same way it already does after creation.
-        """
+    async def recatalog(self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None) -> Template:
+        """Re-run LD-2 cataloguing against the template's stored `.pptx`
+        (the LLM counterpart to `reinspect`). Parks at `cataloguing` again --
+        the caller polls, same as `create`."""
         latest = self.repo.latest(logical_id)
         if latest is None:
             raise NotFoundError("Template not found.")
         if not latest.source_pptx_uri:
             raise ValidationError(
-                "This template has no stored PPTX. The slide engine derives colours, "
-                "fonts and layouts from an uploaded deck, so there is nothing to "
-                "register — create a template with a .pptx instead.",
-                code="no_source_pptx",
+                "This template has no stored .pptx to catalogue.", code="no_source_pptx"
             )
-
-        latest.registration_status = RegistrationStatus.pending
-        latest.registration_error = None
+        latest.catalog_status = TemplateCatalogStatus.cataloguing
+        latest.catalog_error = None
         self.repo.db.add(latest)
         self.repo.db.flush()
-
-        job, _ = self.job_service.create(
-            job_type=JobType.register_template,
-            idempotency_key=f"register_template:{latest.id}:retry:{uuid.uuid4().hex}",
-            ref_id=latest.id,
-        )
-        await self.job_service.commit_and_dispatch(job)
-
-        self._audit("template.reregistration_queued", latest, actor_user_id)
-        logger.info("template_reregistration_queued", extra={"template_id": str(logical_id)})
+        self._audit("template.recatalogued", latest, actor_user_id)
+        await self._dispatch_cataloguing(latest)
         return latest
 
-    async def delete(
-        self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None
-    ) -> None:
-        """Delete every version of a logical template (TM-5), engine-side then here.
+    def review_catalog(
+        self,
+        logical_id: uuid.UUID,
+        *,
+        designs: list[dict[str, Any]] | None,
+        actor_user_id: uuid.UUID | None,
+    ) -> Template:
+        """LD-4/L3: an admin reviews the LLM's catalog, optionally correcting
+        role/anchor labels, and marks it reviewed -- THE approval gate now
+        (replaces "usable inspection auto-approves"): a catalog nobody has
+        looked at is not something a deck should be planned against, so
+        review is what moves `status` to `approved`, not cataloguing success
+        alone.
+
+        `designs`, when given, REPLACES the stored catalog's designs
+        wholesale -- validated through the same `DesignCatalog` pydantic
+        contract cataloguing itself produces, so a correction cannot save a
+        shape id that structurally could not have come from `deck/catalog.py`
+        in the first place.
+        """
+        latest = self.repo.latest(logical_id)
+        if latest is None:
+            raise NotFoundError("Template not found.")
+        if latest.catalog_status is not TemplateCatalogStatus.ready:
+            raise ValidationError(
+                f"This template's catalog is '{latest.catalog_status.value}', not ready to review.",
+                code="catalog_not_ready",
+            )
+
+        if designs is not None:
+            try:
+                corrected = DesignCatalog(designs=designs)
+            except Exception as exc:  # pydantic ValidationError -- reject, don't guess
+                raise ValidationError(f"Invalid catalog correction: {exc}") from exc
+            latest.slide_catalog = corrected.model_dump(mode="json")
+
+        latest.catalog_reviewed_at = utcnow()
+        latest.catalog_reviewed_by = actor_user_id
+        latest.status = RegistryStatus.approved
+        self.repo.db.add(latest)
+        self.repo.db.flush()
+        self._audit("template.catalog_reviewed", latest, actor_user_id)
+        logger.info("template_catalog_reviewed", extra={"template_id": str(logical_id)})
+        return latest
+
+    def delete(self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None) -> None:
+        """Delete every version of a logical template (TM-5).
 
         Refuses if ANY version is pinned by a Generation -- deleting it would strand
         that generation's provenance (`Generation.template_id`/`template_version`),
         the same invariant `VersionInUseError` already protects on status
         transitions, just checked across every version rather than one.
+
+        No engine-side call (RM-3) -- inspection never registers anything
+        outside this database, so there is nothing else to clean up.
         """
         rows = self.repo.all_versions(logical_id)
         if not rows:
@@ -179,13 +227,6 @@ class TemplateService:
             raise VersionInUseError(
                 "This template is used by an existing generation and cannot be deleted."
             )
-
-        # Engine side first: if this fails, nothing here has been touched yet, so
-        # a retry is just calling delete again -- never a NoteAI row with no
-        # engine counterpart to explain.
-        engine_refs = {r.presenton_template_ref for r in rows if r.presenton_template_ref}
-        for ref in engine_refs:
-            await self.presenton.delete_template(ref=ref)
 
         version_count = len(rows)
         for row in rows:

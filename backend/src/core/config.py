@@ -62,8 +62,8 @@ class Settings(BaseSettings):
         seen: set[str] = set()
         return [m for m in ordered if not (m in seen or seen.add(m))]
 
-    # AI output language (decks via Presenton, plus the guide/chat prompts).
-    # Presenton and the prompts expect a language NAME (e.g. "Bahasa Indonesia"),
+    # AI output language (the deck planner, plus the guide/chat prompts).
+    # The prompts expect a language NAME (e.g. "Bahasa Indonesia"),
     # never an ISO code. Default targets Indonesian users; both are configurable.
     default_language: str = Field(default="Bahasa Indonesia", alias="DEFAULT_LANGUAGE")
     languages: str = Field(default="Bahasa Indonesia,English", alias="LANGUAGES")
@@ -101,9 +101,6 @@ class Settings(BaseSettings):
     open_notebook_url: str = Field(
         default="http://open-notebook:5055", alias="OPEN_NOTEBOOK_URL"
     )
-    presenton_url: str = Field(default="http://presenton:80", alias="PRESENTON_URL")
-    presenton_auth_username: str = Field(default="admin", alias="PRESENTON_AUTH_USERNAME")
-    presenton_auth_password: str = Field(default="", alias="PRESENTON_AUTH_PASSWORD")
 
     # --- Engine resilience knobs (timeouts / retries / circuit breaker) ---
     engine_timeout_seconds: float = Field(default=30.0)
@@ -117,15 +114,37 @@ class Settings(BaseSettings):
     ingest_poll_max_attempts: int = Field(default=60)  # ~2 min at 2s
     ingest_presign_ttl_seconds: int = Field(default=900)
 
-    # --- Template registration polling (TM-1/TM-2: layout generation via
-    # POST /template/async is an engine-side async task, polled the same way
-    # ingestion analysis already is) ---
-    template_registration_poll_interval_seconds: float = Field(default=3.0)
-    template_registration_poll_max_attempts: int = Field(default=100)  # ~5 min at 3s
-
     # --- Outline LLM (controlled prompt: low temperature, pinned model) ---
     outline_llm_temperature: float = Field(default=0.1)
     outline_llm_max_tokens: int = Field(default=2000)
+
+    # --- Deck template cataloguing (LD-2: one-time-per-template LLM call --
+    # dump.py's slide text -> DesignCatalog. Low temperature: this is
+    # classification, not composition, and consistency across a 30-slide
+    # template matters more than variety) ---
+    deck_catalog_llm_temperature: float = Field(default=0.1)
+    deck_catalog_llm_max_tokens: int = Field(default=6000)
+
+    # --- Deck content + design planner (LD-6: ONE call -- content AND design
+    # selection together, never layout/colour/font. Replaces RM-6's
+    # content-only call plus RM-7's separate layout tie-break call: now that
+    # a template's designs are catalogued once at onboarding (LD-2), picking
+    # one per section is a small enough judgement to fold into the same call
+    # that writes the content -- there is no separate matching step left) ---
+    deck_plan_llm_temperature: float = Field(default=0.4)
+    deck_plan_llm_max_tokens: int = Field(default=4000)
+
+    # --- Per-task model routing (RM-12, COST-AND-MODEL-STRATEGY.md §6) ---
+    # Empty means "use the tenant's configured model". One global model is what
+    # let the deck engine silently inherit the chat model once before; these
+    # exist so the deck calls can be priced and evaluated separately from chat:
+    #   - deck planning is the quality-sensitive one (Bahasa Indonesia,
+    #     character budgets, strict JSON, design selection) -- worth spending on.
+    #   - template cataloguing runs once per template and amortises to
+    #     near-zero (assessment §4) -- also worth the best model, not the
+    #     cheapest, hence no separate "cheap tier" default here either.
+    deck_plan_model: str = Field(default="", alias="DECK_PLAN_MODEL")
+    deck_catalog_model: str = Field(default="", alias="DECK_CATALOG_MODEL")
 
     # --- Chat LLM (RAG Q&A + guide) ---
     # A safety net, not an answer-length policy: most replies land far below this, so

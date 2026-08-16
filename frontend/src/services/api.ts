@@ -91,15 +91,11 @@ export type Tone =
   | "sales_pitch";
 export type Verbosity = "concise" | "standard" | "text-heavy";
 
-/** Whether the slide engine accepted this template (TM-3). Four distinct states,
- *  previously collapsed into one `fallback` value that made "still working" and
- *  "the engine rejected it" look identical:
- *  - `pending`: registration queued or in flight (TM-2: async, not inline).
- *  - `registered`: usable -- decks render with the uploaded branding.
- *  - `no_source`: no PPTX was uploaded. Not an error, nothing to retry.
- *  - `failed`: the engine rejected the deck or was unreachable; `registration_error`
- *    carries the reason. */
-export type RegistrationStatus = "pending" | "registered" | "no_source" | "failed";
+/** LD-3: lifecycle of the LLM-produced design catalog (`deck/catalog.py`) --
+ *  the only read of a template's `.pptx` as of the Phase C cutover. Replaces
+ *  the old `TemplateStatus`/`inspection_status` (`deck/inspect.py`'s
+ *  geometric layout read, deleted). */
+export type CatalogStatus = "no_source" | "cataloguing" | "ready" | "failed";
 
 export interface Template {
   id: string;
@@ -108,23 +104,49 @@ export interface Template {
   brand_tokens: Record<string, unknown>;
   status: RegistryStatus;
   has_pptx: boolean;
-  registration_status: RegistrationStatus;
-  registration_error: string | null;
-  /** Same-origin link to preview this template's layouts in the slide editor,
-   *  composed by the backend from the ENGINE's template id. `null` when the engine
-   *  never accepted the template, so there is nothing to preview. */
-  preview_url: string | null;
-  /** Slide preview images from registration (DG-3), for a picker. Empty when
-   *  registration fell back or produced none. */
-  thumbnail_urls: string[];
+  catalog_status: CatalogStatus;
+  catalog_error: string | null;
+  /** L3: whether an admin has reviewed (and possibly corrected) the current
+   *  catalog since it was last (re)produced. Also gates `status === "approved"`
+   *  -- see `TemplateService.review_catalog` on the backend. */
+  catalog_reviewed: boolean;
   created_at: string;
 }
 
-/** A template is only worth offering if it will actually change the render --
- *  `approved` alone isn't enough: a template can be approved AND have fallen back
- *  to the stock theme (DG-3.1, the bug StudioPanel's plain `status` filter had). */
+/** One shape a design can address, by the shape id `deck/dump.py` recorded.
+ *  `purpose` is the LLM's own label: title/subtitle/body/item_<N>_title/
+ *  item_<N>_body/visual_caption/other. */
+export interface DesignAnchor {
+  anchor_id: string;
+  current_text: string;
+  purpose: string;
+  char_budget: number | null;
+}
+
+/** One catalogued slide design (LD-2) -- a reusable unit `deck/renderer.py`
+ *  clones wholesale, never rebuilt from a layout. */
+export interface Design {
+  design_id: string;
+  slide_index: number;
+  role: string;
+  capacity: number;
+  anchors: DesignAnchor[];
+  usable: boolean;
+  reason: string | null;
+}
+
+export interface DesignCatalog {
+  schema_version: string;
+  designs: Design[];
+}
+
+/** A template is only worth offering if a deck can actually be planned
+ *  against it. `status === "approved"` now IS that gate (L3): a template
+ *  only reaches `approved` once an admin has reviewed its catalog
+ *  (`TemplateService.review_catalog`) -- there is no separate inspection
+ *  check left to also verify. */
 export function isSelectableTemplate(t: Template): boolean {
-  return t.status === "approved" && t.registration_status === "registered";
+  return t.status === "approved";
 }
 
 export interface ExtractedTokensResponse {
@@ -219,12 +241,12 @@ export interface Outline {
   created_at: string;
 }
 
-export type GenerationStatus =
-  | "queued"
-  | "generating"
-  | "validating"
-  | "ready"
-  | "failed";
+/** LD-9: `awaiting_review` is vestigial -- the old layout matcher that parked
+ *  a deck for a human is deleted (`deck/matcher.py`); the review gate moved
+ *  to the template's catalog instead (L3, reviewed once, before any deck
+ *  plans against it). Kept in the type only because a pre-cutover row could
+ *  still carry it; no new generation ever will. */
+export type GenerationStatus = "queued" | "awaiting_review" | "generating" | "validating" | "ready" | "failed";
 
 export interface ConsistencyReport {
   passed: boolean;
@@ -244,10 +266,6 @@ export interface Generation {
   source_ids: string[];
   consistency_report: ConsistencyReport | null;
   artifacts: { pptx: boolean; pdf: boolean };
-  /** Same-origin link that opens this deck in the slide editor, composed by the
-   *  backend. `null` when there is nothing to open -- the engine has not produced a
-   *  presentation for this generation yet (T-1.2). */
-  editor_url: string | null;
   error: string | null;
   created_by: string | null;
   created_at: string;
@@ -367,10 +385,10 @@ export interface DeckConfig {
   tone: Tone;
   density: Verbosity;
   n_slides: number;
+  /** Required in practice: rendering fills the template's own layouts, so there
+   *  is no stock theme to fall back to (RM-11 refuses a generation without one). */
   template_id?: string | null;
-  web_search: boolean;
   model?: string;
-  export_as: "pptx" | "pdf";
   // AI output language NAME (e.g. "Bahasa Indonesia"); omit → server default.
   language?: string;
 }
@@ -487,9 +505,7 @@ export const api = {
       tone?: Tone;
       density?: Verbosity;
       template_id?: string | null;
-      web_search?: boolean;
       model?: string;
-      export_as?: "pptx" | "pdf";
       language?: string;
     },
   ) =>
@@ -506,12 +522,6 @@ export const api = {
   getGeneration: (id: string) => request<Generation>(`/generations/${id}`),
   listGenerations: (projectId: string) =>
     request<Generation[]>(`/projects/${projectId}/generations`),
-  // DG-4: fired right before navigating to "Open in Studio". From then on this
-  // generation's own download stops being offered (server-enforced, not just
-  // hidden here) -- the stored artifact can no longer be trusted to match what
-  // editing in the studio produces (TD-24).
-  markStudioOpened: (id: string) =>
-    request<Generation>(`/generations/${id}/studio-opened`, { method: "POST" }),
   downloadGeneration: (id: string, format: "pptx" | "pdf") =>
     requestBlob(`/generations/${id}/download?format=${format}`),
   setLlmConfig: (input: {
@@ -527,8 +537,8 @@ export const api = {
 
   // --- Templates ---
   listTemplates: () => request<Template[]>("/templates"),
-  // TM-2: returns immediately with registration_status "pending" -- registration
-  // is an async engine-side job now, not run inline in this request.
+  // LD-3: cataloguing is enqueued as a job, not run inline -- the response
+  // carries `catalog_status: "cataloguing"`, not a terminal outcome.
   createTemplate: (input: { name: string; brand_tokens: Record<string, unknown>; pptx?: File | null }) => {
     const form = new FormData();
     form.set("name", input.name);
@@ -541,14 +551,25 @@ export const api = {
     form.set("file", file);
     return request<ExtractedTokensResponse>("/templates/extract-tokens", { method: "POST", body: form });
   },
-  /** Retry engine registration from the template's already-stored PPTX. Repairs
-   *  templates whose registration failed; no re-upload needed. Also async (TM-2):
-   *  returns with registration_status reset to "pending". */
-  reregisterTemplate: (id: string) =>
-    request<Template>(`/templates/${id}/reregister`, { method: "POST" }),
   // TM-5. Refuses (409) if a Generation still pins any version of this template.
   deleteTemplate: (id: string) =>
     request<void>(`/templates/${id}`, { method: "DELETE" }),
+
+  // --- LD-4: catalog review (admin) ---
+  /** The LLM's design catalog, for the review screen. 422 `catalog_not_ready`
+   *  while `catalog_status` isn't `"ready"` yet. */
+  getTemplateCatalog: (id: string) => request<DesignCatalog>(`/templates/${id}/catalog`),
+  /** Re-run LD-2 cataloguing against the template's stored `.pptx`. Async --
+   *  the response carries `catalog_status: "cataloguing"` again, poll `listTemplates`. */
+  recatalogTemplate: (id: string) =>
+    request<Template>(`/templates/${id}/recatalog`, { method: "POST" }),
+  /** Mark the catalog reviewed (L3), optionally replacing its designs with an
+   *  admin's corrections. Pass no `designs` to approve the catalog unchanged. */
+  reviewTemplateCatalog: (id: string, designs?: Design[]) =>
+    request<Template>(`/templates/${id}/catalog/review`, {
+      method: "POST",
+      body: JSON.stringify(designs ? { designs } : {}),
+    }),
 
   // --- Profiles ---
   listProfiles: () => request<Profile[]>("/profiles"),

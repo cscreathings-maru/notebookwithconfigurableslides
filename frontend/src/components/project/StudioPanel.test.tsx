@@ -28,9 +28,19 @@ const READY_DECK = {
   created_at: new Date().toISOString(),
 };
 
-const READY_DECK_WITH_EDITOR = {
+const FAILED_DECK = {
   ...READY_DECK,
-  editor_url: "/editor/presentation?id=pres-1",
+  id: "gen-2",
+  status: "failed",
+  artifacts: { pptx: false, pdf: false },
+  error: "Consistency check failed; deck flagged for review.",
+  consistency_report: {
+    passed: false,
+    checks: [
+      { name: "artifact_readable", passed: true, detail: {} },
+      { name: "slide_count_in_range", passed: false, detail: { n_slides: 3, min: 4 } },
+    ],
+  },
 };
 
 function stubApi(overrides: Partial<typeof api> = {}) {
@@ -143,48 +153,90 @@ describe("Studio uses the outline-first flow, not the old one-shot form", () => 
   });
 });
 
-describe("DG-4: studio-opened download cutover", () => {
-  it("records the open and hides the download buttons once the backend confirms it", async () => {
-    // Arrange -- the backend reports artifacts as no longer available once
-    // studio-opened is recorded; the panel reloads the list to reflect it.
-    vi.spyOn(api, "listGenerations")
-      .mockResolvedValueOnce([READY_DECK_WITH_EDITOR] as never)
-      .mockResolvedValueOnce([
-        { ...READY_DECK_WITH_EDITOR, artifacts: { pptx: false, pdf: false } },
-      ] as never);
-    vi.spyOn(api, "listTemplates").mockResolvedValue([] as never);
-    vi.spyOn(api, "listModels").mockResolvedValue([] as never);
-    const markOpened = vi
-      .spyOn(api, "markStudioOpened")
-      .mockResolvedValue({ ...READY_DECK_WITH_EDITOR, artifacts: { pptx: false, pdf: false } } as never);
+describe("RM-13: the Presenton editor is gone", () => {
+  it("offers no editor button -- there is no external studio to open", async () => {
+    // Arrange -- the deck renders in-process now (RM-11), so there is no
+    // engine-side presentation to hand off to. A button that opened one would
+    // point at a service that no longer exists.
+    stubApi();
+    vi.spyOn(api, "listLanguages").mockResolvedValue([]);
 
     // Act
     renderPanel();
-    const editorButton = await screen.findByRole("button", { name: /Editor/ });
-    await userEvent.click(editorButton);
+    await screen.findByRole("button", { name: /PPTX/ });
 
     // Assert
-    await waitFor(() => expect(markOpened).toHaveBeenCalledWith("gen-1"));
-    await waitFor(() =>
-      expect(screen.queryByRole("button", { name: /PPTX/ })).not.toBeInTheDocument(),
-    );
+    expect(screen.queryByRole("button", { name: /Editor/ })).not.toBeInTheDocument();
   });
+});
 
-  it("still opens the editor even if recording the open fails", async () => {
-    // Arrange -- opening the editor is the primary action; tracking failure is
-    // a secondary concern that must not block it.
-    stubApi();
-    vi.spyOn(api, "listGenerations").mockResolvedValue([READY_DECK_WITH_EDITOR] as never);
-    vi.spyOn(api, "markStudioOpened").mockRejectedValue(new Error("network"));
+describe("failed decks explain themselves", () => {
+  it("shows the error and which consistency checks tripped", async () => {
+    // Arrange -- a failed deck used to render the single word "failed"; the
+    // reason was on the wire the whole time and nothing displayed it.
+    vi.spyOn(api, "listGenerations").mockResolvedValue([FAILED_DECK] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([] as never);
+    vi.spyOn(api, "listModels").mockResolvedValue([] as never);
+    vi.spyOn(api, "listLanguages").mockResolvedValue([]);
 
     // Act
     renderPanel();
-    const editorButton = await screen.findByRole("button", { name: /Editor/ });
-    await userEvent.click(editorButton);
 
-    // Assert -- the modal opens regardless (its title text renders)
-    await waitFor(() =>
-      expect(screen.getByText(/Interactive Presentation Slide Editor/)).toBeInTheDocument(),
-    );
+    // Assert -- the backend's own message, plus the named failing check
+    expect(await screen.findByText(/Consistency check failed/)).toBeInTheDocument();
+    expect(
+      screen.getByText(messages["consistency.slide_count_in_range"]!),
+    ).toBeInTheDocument();
+    // ...and only the FAILING check is listed, not the passing one.
+    expect(
+      screen.queryByText(messages["consistency.artifact_readable"]!),
+    ).not.toBeInTheDocument();
+  });
+});
+
+describe("download actions are reachable without hover", () => {
+  it("renders download buttons visibly, not gated behind group-hover", async () => {
+    // Arrange -- these were `opacity-0 group-hover:opacity-100`, which on a
+    // touch device made the finished deck unreachable entirely.
+    stubApi();
+    vi.spyOn(api, "listLanguages").mockResolvedValue([]);
+
+    // Act
+    renderPanel();
+
+    // Assert
+    const button = await screen.findByRole("button", { name: /PPTX/ });
+    expect(button).toBeVisible();
+    expect(button.closest(".opacity-0")).toBeNull();
+  });
+});
+
+describe("LD-9: the per-deck review gate is retired", () => {
+  const STALE_PARKED = {
+    ...READY_DECK,
+    id: "gen-3",
+    status: "awaiting_review",
+    artifacts: { pptx: false, pdf: false },
+  };
+
+  it("shows a stale-state message instead of a dead review button", async () => {
+    // Arrange -- `awaiting_review` is vestigial (module docstring): no new
+    // generation ever lands here, since the review gate moved to the
+    // template's catalog (L3). A pre-cutover row stuck at this status has no
+    // action left to take -- the old approve endpoint is gone -- so this
+    // must say so rather than pointing at a dead flow.
+    vi.spyOn(api, "listGenerations").mockResolvedValue([STALE_PARKED] as never);
+    vi.spyOn(api, "listTemplates").mockResolvedValue([] as never);
+    vi.spyOn(api, "listModels").mockResolvedValue([] as never);
+    vi.spyOn(api, "listLanguages").mockResolvedValue([]);
+
+    // Act
+    renderPanel();
+
+    // Assert
+    expect(await screen.findByText(/tidak dapat dilanjutkan/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Periksa tata letak/ })).not.toBeInTheDocument();
+    // ...and no download, because nothing was ever rendered.
+    expect(screen.queryByRole("button", { name: /PPTX/ })).not.toBeInTheDocument();
   });
 });

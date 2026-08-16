@@ -20,10 +20,8 @@ from src.generation.worker import generate_presentation
 from src.ingestion.service import ingest_source
 from src.main import app
 from src.models import Generation
-from src.registry.registration import run_template_registration
-from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, FakePresenton
+from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, catalog_and_approve, usable_pptx_bytes
 
 PROVIDER = {
     "provider": "deepseek",
@@ -32,11 +30,6 @@ PROVIDER = {
     "api_key": "sk-x",
 }
 EDIT_MARKER = "EDITED-UNIQUE-MARKER-42"
-
-
-@pytest.fixture
-def presenton() -> FakePresenton:
-    return FakePresenton()
 
 
 @pytest.fixture
@@ -50,8 +43,7 @@ def on_client() -> FakeOpenNotebook:
 
 
 @pytest.fixture(autouse=True)
-def _wire(presenton, store, on_client):
-    app.dependency_overrides[api_deps.get_presenton_client] = lambda: presenton
+def _wire(store, on_client):
     app.dependency_overrides[api_deps.get_object_store] = lambda: store
     app.dependency_overrides[api_deps.get_open_notebook_client] = lambda: on_client
     app.dependency_overrides[api_deps.get_llm_client] = lambda: FakeLlm()
@@ -76,31 +68,30 @@ async def _approved_profile_and_template(client, seed: Fixtures) -> str:
         files={
             "file": (
                 "brand.pptx",
-                b"PK\x03\x04 fake pptx",
+                usable_pptx_bytes(),
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
         },
         headers=auth(seed.admin_a_sub),
     )
-    assert resp.status_code == 202, resp.text
-    t = resp.json()
-    with SessionLocal() as db:
-        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(t["id"]))
-        await run_template_registration(
-            db=db,
-            template_row_id=row.id,
-            tenant_id=seed.tenant_a,
-            presenton=FakePresenton(),
-            object_store=FakeObjectStore(),
-        )
-        db.commit()
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    t = await catalog_and_approve(
+        tenant_id=seed.tenant_a,
+        template_logical_id=created["id"],
+        client=client,
+        headers=auth(seed.admin_a_sub),
+    )
     body = {
         "name": "Group Management",
         "audience": "executives",
         "template_id": t["id"],
         "tone": "professional",
         "verbosity": "standard",
-        "slide_min": 4,
+        # RM-11: 2 sections + a title slide is 3, so slide_min must not
+        # exceed that (deck/from_outline.py no longer clamps/pads to a
+        # profile minimum -- the outline's own section count decides).
+        "slide_min": 2,
         "slide_max": 12,
         "language": "en",
         "section_structure": [{"title": "Summary"}, {"title": "Results"}],
@@ -133,7 +124,7 @@ async def _project_with_ready_source(client, seed: Fixtures, on_client: FakeOpen
     return project["id"]
 
 
-async def _generate(client, seed: Fixtures, project_id: str, outline_id: str, presenton, store) -> dict:
+async def _generate(client, seed: Fixtures, project_id: str, outline_id: str, store) -> dict:
     gen = client.post(
         f"/api/v1/projects/{project_id}/generations",
         json={"outline_id": outline_id},
@@ -144,7 +135,6 @@ async def _generate(client, seed: Fixtures, project_id: str, outline_id: str, pr
             db=db,
             generation_id=uuid.UUID(gen["id"]),
             tenant_id=seed.tenant_a,
-            presenton=presenton,
             object_store=store,
         )
         db.commit()
@@ -155,7 +145,7 @@ async def _generate(client, seed: Fixtures, project_id: str, outline_id: str, pr
 
 
 async def test_edit_then_regenerate_does_not_reingest(
-    client, seed: Fixtures, presenton, store, on_client
+    client, seed: Fixtures, store, on_client
 ) -> None:
     _set_byok(client, seed)
     profile_id = await _approved_profile_and_template(client, seed)
@@ -169,7 +159,7 @@ async def test_edit_then_regenerate_does_not_reingest(
         json={"profile_id": profile_id},
         headers=auth(seed.author_a_sub),
     ).json()
-    gen1 = await _generate(client, seed, project_id, outline["id"], presenton, store)
+    gen1 = await _generate(client, seed, project_id, outline["id"], store)
 
     # Edit the outline: change one talking point's wording only.
     current = client.get(f"/api/v1/outlines/{outline['id']}", headers=auth(seed.author_a_sub)).json()
@@ -184,7 +174,7 @@ async def test_edit_then_regenerate_does_not_reingest(
     assert edited.status_code == 200, edited.text
     assert edited.json()["valid"] is True
 
-    gen2 = await _generate(client, seed, project_id, outline["id"], presenton, store)
+    gen2 = await _generate(client, seed, project_id, outline["id"], store)
 
     # CORE: no re-ingestion — Open Notebook add_source was not called again.
     assert on_client.calls.count("add_source") == ingest_add_source_calls
@@ -197,13 +187,19 @@ async def test_edit_then_regenerate_does_not_reingest(
     with SessionLocal() as db:
         g1 = db.get(Generation, uuid.UUID(gen1["id"]))
         g2 = db.get(Generation, uuid.UUID(gen2["id"]))
-        # slides_markdown is Presenton's string[] (one block per slide).
-        assert EDIT_MARKER in "\n".join(g2.params["slides_markdown"])
-        assert EDIT_MARKER not in "\n".join(g1.params["slides_markdown"])
+        # LD-9: structure/wording now live in deck_plan (design_id + a dict
+        # of anchor_id -> text per slide), not a markdown blob.
+        def _all_text(deck_plan: dict) -> str:
+            return "\n".join(
+                text for s in deck_plan["slides"] for text in s["anchor_texts"].values()
+            )
+
+        assert EDIT_MARKER in _all_text(g2.deck_plan)
+        assert EDIT_MARKER not in _all_text(g1.deck_plan)
 
 
 async def test_history_exposes_full_provenance(
-    client, seed: Fixtures, presenton, store, on_client
+    client, seed: Fixtures, store, on_client
 ) -> None:
     _set_byok(client, seed)
     profile_id = await _approved_profile_and_template(client, seed)
@@ -217,8 +213,8 @@ async def test_history_exposes_full_provenance(
         json={"profile_id": profile_id},
         headers=auth(seed.author_a_sub),
     ).json()
-    await _generate(client, seed, project_id, outline["id"], presenton, store)
-    await _generate(client, seed, project_id, outline["id"], presenton, store)
+    await _generate(client, seed, project_id, outline["id"], store)
+    await _generate(client, seed, project_id, outline["id"], store)
 
     history = client.get(
         f"/api/v1/projects/{project_id}/generations", headers=auth(seed.author_a_sub)
@@ -242,7 +238,7 @@ async def test_history_exposes_full_provenance(
 
 
 async def test_editing_profile_does_not_mutate_past_generation(
-    client, seed: Fixtures, presenton, store, on_client
+    client, seed: Fixtures, store, on_client
 ) -> None:
     _set_byok(client, seed)
     profile_id = await _approved_profile_and_template(client, seed)
@@ -253,7 +249,7 @@ async def test_editing_profile_does_not_mutate_past_generation(
         json={"profile_id": profile_id},
         headers=auth(seed.author_a_sub),
     ).json()
-    gen1 = await _generate(client, seed, project_id, outline["id"], presenton, store)
+    gen1 = await _generate(client, seed, project_id, outline["id"], store)
     assert gen1["profile_version"] == 1
 
     # Edit the profile -> new version 2 (immutable versioning from the registry).
@@ -265,7 +261,7 @@ async def test_editing_profile_does_not_mutate_past_generation(
             "template_id": _template_id_of_profile(client, seed, profile_id),
             "tone": "casual",
             "verbosity": "concise",
-            "slide_min": 3,
+            "slide_min": 2,
             "slide_max": 6,
             "language": "en",
             "section_structure": [{"title": "Summary"}],

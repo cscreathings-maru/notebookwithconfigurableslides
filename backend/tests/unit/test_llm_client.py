@@ -1,7 +1,7 @@
 """T-2.3: the LLM must be as resilient and as diagnosable as the other engines.
 
 `LlmClient` called httpx directly -- no retry, no backoff, no circuit breaker, unlike
-`OpenNotebookClient` and `PresentonClient`. Every failure collapsed into the single
+`OpenNotebookClient`. Every failure collapsed into the single
 string "LLM provider request failed.", so an operator could not tell an expired key
 from insufficient credit from a typo in the model slug.
 
@@ -291,3 +291,14 @@ async def test_talking_points_rejects_unparseable_json() -> None:
         await _client(handler).talking_points(
             section_ids=["s1"], context=[], profile={}, provider_config=PROVIDER
         )
+
+
+def test_model_for_returns_none_when_no_task_override_is_set() -> None:
+    """An unset task must behave exactly as before per-task routing existed --
+    None means "use the tenant's model", not "use an empty model name"."""
+    from src.tenancy.llm_config import TenantLlmConfigService
+
+    svc = TenantLlmConfigService(db=None, tenant_id=None)  # no DB access on this path
+    assert svc.model_for("deck_plan") is None
+    assert svc.model_for("deck_catalog") is None
+    assert svc.model_for("something_unrouted") is None

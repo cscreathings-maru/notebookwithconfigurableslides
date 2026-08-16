@@ -1,45 +1,39 @@
 """Integration: registry RBAC, tenant-scoping, author visibility, PPTX import.
 
 - admin-only writes; authors read approved only.
+- creating a template with a real `.pptx` enqueues LD-2 cataloguing (async,
+  a job -- LD-3); the response is NOT terminal. A template becomes
+  `approved` only once an admin reviews its finished catalog
+  (`/catalog/review`, L3) -- there is no auto-approve anymore.
 - profiles/templates are strictly tenant-scoped (cross-tenant -> 404 / hidden).
-- creating a template with a PPTX queues registration via Presenton (TM-2, async;
-  tenant-namespaced); engine refs and pptx keys never reach the client.
-- TM-4: there is no manual approve step for templates anymore -- a successful
-  registration auto-approves. Governance (approved-template-required) is proven
-  by a template that hasn't finished registering yet, not by withholding approval.
+- there is no manual approve step for templates BEYOND the catalog review --
+  cataloguing succeeding alone does not approve; the review call does.
 """
 
 from __future__ import annotations
 
 import json
-import uuid
 
 import pytest
 
 from src.api import deps as api_deps
-from src.core.db import SessionLocal
 from src.main import app
-from src.registry.registration import run_template_registration
-from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakeObjectStore, FakePresenton
-
-
-@pytest.fixture
-def presenton() -> FakePresenton:
-    return FakePresenton()
+from tests.fakes import FakeObjectStore, catalog_and_approve, usable_pptx_bytes
 
 
 @pytest.fixture(autouse=True)
-def _wire(presenton: FakePresenton):
+def _wire():
+    # One instance for the whole test -- catalog_and_approve() reads back what
+    # create() wrote, so the fake store must persist across requests within a
+    # test, not be recreated per dependency resolution.
     store = FakeObjectStore()
-    app.dependency_overrides[api_deps.get_presenton_client] = lambda: presenton
     app.dependency_overrides[api_deps.get_object_store] = lambda: store
     yield
     app.dependency_overrides.clear()
 
 
-def _create_template(client, sub: str, name: str, file: bool = False) -> dict:
+def _create_template(client, sub: str, name: str, *, file: bool = False) -> dict:
     kwargs: dict = {
         "data": {"name": name, "brand_tokens": json.dumps({"primary": "#0A0A0A"})},
         "headers": auth(sub),
@@ -48,34 +42,26 @@ def _create_template(client, sub: str, name: str, file: bool = False) -> dict:
         kwargs["files"] = {
             "file": (
                 "brand.pptx",
-                b"PK\x03\x04 fake pptx",
+                usable_pptx_bytes(),
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
         }
     resp = client.post("/api/v1/templates", **kwargs)
-    assert resp.status_code == 202, resp.text
+    assert resp.status_code == 201, resp.text
     return resp.json()
 
 
-async def _registered_template(
-    client, seed: Fixtures, sub: str, name: str, *, presenton: FakePresenton | None = None
-) -> dict:
-    """Create WITH a pptx and drive registration to completion. TM-4 auto-approves
-    on success, so this is also "an approved template" -- the only kind there is
-    now."""
-    created = _create_template(client, sub, name, file=True)
-    with SessionLocal() as db:
-        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(created["id"]))
-        await run_template_registration(
-            db=db,
-            template_row_id=row.id,
-            tenant_id=seed.tenant_a,
-            presenton=presenton or FakePresenton(),
-            object_store=FakeObjectStore(),
-        )
-        db.commit()
-    listed = client.get("/api/v1/templates", headers=auth(sub)).json()
-    return next(t for t in listed if t["id"] == created["id"])
+async def _approved_template(client, seed: Fixtures, name: str = "Brand") -> dict:
+    """Create with a real `.pptx`, run cataloguing, and approve it via
+    review -- the full path a template must go through before a profile can
+    bind to it."""
+    template = _create_template(client, seed.admin_a_sub, name, file=True)
+    return await catalog_and_approve(
+        tenant_id=seed.tenant_a,
+        template_logical_id=template["id"],
+        client=client,
+        headers=auth(seed.admin_a_sub),
+    )
 
 
 def _profile_body(template_id: str, name: str = "Group Management") -> dict:
@@ -93,30 +79,46 @@ def _profile_body(template_id: str, name: str = "Group Management") -> dict:
     }
 
 
-def test_template_response_hides_engine_ref_and_pptx(client, seed: Fixtures) -> None:
+def test_template_response_hides_the_stored_pptx_key(client, seed: Fixtures) -> None:
     template = _create_template(client, seed.admin_a_sub, "Brand")
-    assert "presenton_template_ref" not in template
     assert "source_pptx_uri" not in template
     assert template["status"] == "draft"
-    assert template["registration_status"] == "pending"
+    assert template["catalog_status"] == "no_source"
 
 
-async def test_pptx_import_calls_presenton_namespaced(
-    client, seed: Fixtures, presenton: FakePresenton
-) -> None:
-    body = await _registered_template(
-        client, seed, seed.admin_a_sub, "Imported", presenton=presenton
+def test_pptx_import_starts_cataloguing_without_auto_approving(client, seed: Fixtures) -> None:
+    template = _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    assert template["catalog_status"] == "cataloguing"
+    assert template["status"] == "draft"  # no auto-approve anymore (L3)
+
+
+@pytest.mark.asyncio
+async def test_reviewing_the_catalog_approves_the_template(client, seed: Fixtures) -> None:
+    approved = await _approved_template(client, seed, "Imported")
+    assert approved["catalog_status"] == "ready"
+    assert approved["catalog_reviewed"] is True
+    assert approved["status"] == "approved"
+
+
+def test_unreadable_pptx_is_rejected_not_500(client, seed: Fixtures) -> None:
+    resp = client.post(
+        "/api/v1/templates",
+        data={"name": "Broken", "brand_tokens": "{}"},
+        files={
+            "file": (
+                "brand.pptx",
+                b"not a real pptx file",
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            )
+        },
+        headers=auth(seed.admin_a_sub),
     )
-    last = presenton.registered[-1]
-    # T-1.3/TM-1: the PPTX reaches the engine as bytes, because the engine derives
-    # the brand from the deck itself. Two different broken request shapes have
-    # each caused every registration to fall through to `failed` in the past
-    # (a wrong field name, then a wrong URL) -- this pins the outcome, not the
-    # transport, so either regression fails it the same way.
-    assert last["pptx_filename"] == "brand.pptx"
-    assert last["name"].startswith("acme__")  # tenant-namespaced
-    assert body["registration_status"] == "registered"
-    assert body["status"] == "approved"  # TM-4: auto-approved on success
+    assert resp.status_code == 201
+    body = resp.json()
+    # A corrupt upload never reaches the object store as a usable .pptx --
+    # the create response cannot know cataloguing will fail (that only
+    # happens once the job runs), but it never auto-approves either.
+    assert body["status"] == "draft"
 
 
 def test_viewer_cannot_create_template(client, seed: Fixtures) -> None:
@@ -128,16 +130,18 @@ def test_viewer_cannot_create_template(client, seed: Fixtures) -> None:
     assert resp.status_code == 403
 
 
+@pytest.mark.asyncio
 async def test_author_cannot_create_profile(client, seed: Fixtures) -> None:
-    template = await _registered_template(client, seed, seed.admin_a_sub, "Brand")
+    template = await _approved_template(client, seed, "Brand")
     resp = client.post(
         "/api/v1/profiles", json=_profile_body(template["id"]), headers=auth(seed.author_a_sub)
     )
     assert resp.status_code == 403
 
 
+@pytest.mark.asyncio
 async def test_author_reads_approved_profiles_only(client, seed: Fixtures) -> None:
-    template = await _registered_template(client, seed, seed.admin_a_sub, "Brand")
+    template = await _approved_template(client, seed, "Brand")
 
     # One draft profile, one approved profile.
     draft = client.post(
@@ -165,15 +169,14 @@ def test_templates_are_tenant_scoped(client, seed: Fixtures) -> None:
     listing_b = client.get("/api/v1/templates", headers=auth(seed.admin_b_sub)).json()
     assert all(t["id"] != template["id"] for t in listing_b)
 
-    reregister_b = client.post(
-        f"/api/v1/templates/{template['id']}/reregister", headers=auth(seed.admin_b_sub)
+    recatalog_b = client.post(
+        f"/api/v1/templates/{template['id']}/recatalog", headers=auth(seed.admin_b_sub)
     )
-    assert reregister_b.status_code == 404
+    assert recatalog_b.status_code == 404
 
 
 def test_profile_requires_approved_template(client, seed: Fixtures) -> None:
-    # A template still `pending` (registration never run) cannot back a profile --
-    # TM-4 only auto-approves a template once registration actually succeeds.
+    # A template with no .pptx (`no_source`) is never approved.
     template = _create_template(client, seed.admin_a_sub, "DraftBrand")
     assert template["status"] == "draft"
     resp = client.post(

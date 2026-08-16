@@ -20,10 +20,8 @@ from src.generation.worker import generate_presentation
 from src.ingestion.service import ingest_source
 from src.main import app
 from src.models import Tenant, UsageRecord
-from src.registry.registration import run_template_registration
-from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, FakePresenton
+from tests.fakes import FakeLlm, FakeObjectStore, FakeOpenNotebook, catalog_and_approve, usable_pptx_bytes
 
 PROVIDER = {
     "provider": "deepseek",
@@ -42,11 +40,6 @@ class CapturingAlertSink:
 
 
 @pytest.fixture
-def presenton() -> FakePresenton:
-    return FakePresenton()
-
-
-@pytest.fixture
 def store() -> FakeObjectStore:
     return FakeObjectStore()
 
@@ -62,8 +55,7 @@ def alert_sink() -> CapturingAlertSink:
 
 
 @pytest.fixture(autouse=True)
-def _wire(presenton, store, on_client, alert_sink):
-    app.dependency_overrides[api_deps.get_presenton_client] = lambda: presenton
+def _wire(store, on_client, alert_sink):
     app.dependency_overrides[api_deps.get_object_store] = lambda: store
     app.dependency_overrides[api_deps.get_open_notebook_client] = lambda: on_client
     app.dependency_overrides[api_deps.get_llm_client] = lambda: FakeLlm()
@@ -89,31 +81,30 @@ async def _approved_profile(client, seed: Fixtures) -> str:
         files={
             "file": (
                 "brand.pptx",
-                b"PK\x03\x04 fake pptx",
+                usable_pptx_bytes(),
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
         },
         headers=auth(seed.admin_a_sub),
     )
-    assert resp.status_code == 202, resp.text
-    t = resp.json()
-    with SessionLocal() as db:
-        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(t["id"]))
-        await run_template_registration(
-            db=db,
-            template_row_id=row.id,
-            tenant_id=seed.tenant_a,
-            presenton=FakePresenton(),
-            object_store=FakeObjectStore(),
-        )
-        db.commit()
+    assert resp.status_code == 201, resp.text
+    created = resp.json()
+    t = await catalog_and_approve(
+        tenant_id=seed.tenant_a,
+        template_logical_id=created["id"],
+        client=client,
+        headers=auth(seed.admin_a_sub),
+    )
     body = {
         "name": "GM",
         "audience": "execs",
         "template_id": t["id"],
         "tone": "professional",
         "verbosity": "standard",
-        "slide_min": 4,
+        # RM-11: the outline's own section count is the slide-count decision
+        # now (deck/from_outline.py, no clamping/padding) -- 2 sections + a
+        # title slide is 3, so slide_min must not exceed that.
+        "slide_min": 2,
         "slide_max": 12,
         "language": "en",
         "section_structure": [{"title": "Summary"}, {"title": "Results"}],
@@ -149,7 +140,7 @@ async def _project_with_outline(client, seed: Fixtures, sub: str, profile_id: st
     return project["id"], outline["id"]
 
 
-async def _generate(client, seed: Fixtures, sub: str, project_id: str, outline_id: str, presenton, store):
+async def _generate(client, seed: Fixtures, sub: str, project_id: str, outline_id: str, store):
     resp = client.post(
         f"/api/v1/projects/{project_id}/generations",
         json={"outline_id": outline_id},
@@ -163,7 +154,6 @@ async def _generate(client, seed: Fixtures, sub: str, project_id: str, outline_i
             db=db,
             generation_id=uuid.UUID(gen["id"]),
             tenant_id=seed.tenant_a,
-            presenton=presenton,
             object_store=store,
         )
         db.commit()
@@ -174,18 +164,18 @@ async def _generate(client, seed: Fixtures, sub: str, project_id: str, outline_i
 
 
 async def test_usage_rollups_per_user_and_tenant(
-    client, seed: Fixtures, presenton, store, on_client
+    client, seed: Fixtures, store, on_client
 ) -> None:
     _set_byok(client, seed)
     profile_id = await _approved_profile(client, seed)
 
     # author_a: one outline + two generations; admin_a: one outline + one generation.
     pa, oa = await _project_with_outline(client, seed, seed.author_a_sub, profile_id, on_client)
-    await _generate(client, seed, seed.author_a_sub, pa, oa, presenton, store)
-    await _generate(client, seed, seed.author_a_sub, pa, oa, presenton, store)
+    await _generate(client, seed, seed.author_a_sub, pa, oa, store)
+    await _generate(client, seed, seed.author_a_sub, pa, oa, store)
 
     pb, ob = await _project_with_outline(client, seed, seed.admin_a_sub, profile_id, on_client)
-    await _generate(client, seed, seed.admin_a_sub, pb, ob, presenton, store)
+    await _generate(client, seed, seed.admin_a_sub, pb, ob, store)
 
     # Cross-tenant noise that must NOT be aggregated into tenant A.
     with SessionLocal() as db:
@@ -229,7 +219,7 @@ async def test_usage_rollups_per_user_and_tenant(
 
 
 async def test_tenant_at_quota_is_blocked_and_recorded(
-    client, seed: Fixtures, presenton, store, on_client, alert_sink
+    client, seed: Fixtures, store, on_client, alert_sink
 ) -> None:
     _set_byok(client, seed)
     profile_id = await _approved_profile(client, seed)
@@ -242,7 +232,7 @@ async def test_tenant_at_quota_is_blocked_and_recorded(
 
     pa, oa = await _project_with_outline(client, seed, seed.author_a_sub, profile_id, on_client)
 
-    first = await _generate(client, seed, seed.author_a_sub, pa, oa, presenton, store)
+    first = await _generate(client, seed, seed.author_a_sub, pa, oa, store)
     assert first.status_code == 202
 
     second = client.post(

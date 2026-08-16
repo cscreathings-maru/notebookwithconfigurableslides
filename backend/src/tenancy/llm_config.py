@@ -65,3 +65,25 @@ class TenantLlmConfigService:
         """Return only non-secret fields, safe to show an admin in the UI."""
         config = self.get_config()
         return {k: v for k, v in config.items() if k in _PUBLIC_FIELDS}
+
+    def model_for(self, task: str) -> str | None:
+        """The model to use for one named task, or None to use the tenant default.
+
+        RM-12 / `COST-AND-MODEL-STRATEGY.md` §6, LD-10: `deck_plan` has to be
+        good at Bahasa Indonesia, character budgets, strict JSON AND design
+        selection now that LD-6 folds layout matching into the same call;
+        `deck_catalog` runs once per template and amortises to near-zero, so
+        it is worth the best model too, never the cheapest. Priced and
+        evaluated separately from `chat`'s model.
+
+        Returning None (rather than the tenant model) keeps the override
+        *optional* at the call site -- `LlmClient` already treats
+        `model_override=None` as "use provider_config's model", so an unset
+        task simply behaves as it always did.
+        """
+        settings = get_settings()
+        override = {
+            "deck_catalog": settings.deck_catalog_model,
+            "deck_plan": settings.deck_plan_model,
+        }.get(task, "")
+        return override or None

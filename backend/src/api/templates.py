@@ -1,55 +1,39 @@
 """Templates router (admin writes; authors read approved only).
 
-Create accepts {name, brand_tokens} plus an optional PPTX (multipart). With a PPTX
-the template is queued for registration with Presenton (TM-2: an async engine-side
-job, not run inline) under a tenant-namespaced name; the engine ref and the stored
-PPTX key never reach the client.
+Create accepts {name, brand_tokens} plus an optional PPTX (multipart). With a
+PPTX, LD-2 cataloguing is enqueued as a job -- the response carries
+`catalog_status: "cataloguing"`, not a terminal outcome (LD-3: an LLM call
+belongs in a job, not a request/response cycle).
 
-TM-4: registration success auto-approves the template -- there is no manual
-approve step anymore. A template's usable state is entirely `registration_status`.
+Approval is no longer automatic (Phase C cutover): a template becomes
+`approved` only once an admin reviews its catalog (`/catalog/review`, L3) --
+`ready` cataloguing alone means the LLM produced something, not that anyone
+has looked at it.
 """
 
 from __future__ import annotations
 
 import json
 import uuid
-from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile, status
 
 from ..auth.principal import Principal
-from ..core.errors import ValidationError
+from ..core.errors import NotFoundError, ValidationError
+from ..deck.catalog import DesignCatalog
 from ..models import Template, UserRole
+from ..registry.repository import TemplateRepository
 from ..registry.service import TemplateService
 from ..registry.extraction import extract_tokens_from_pptx
-from ..schemas.registry import ExtractedTokensResponse, TemplateResponse
+from ..schemas.registry import (
+    CatalogReviewRequest,
+    ExtractedTokensResponse,
+    TemplateResponse,
+)
 from ..tenancy.rbac import require_admin, require_viewer
-from .deps import get_template_service
+from .deps import get_template_repository, get_template_service
 
 router = APIRouter(prefix="/templates", tags=["templates"])
-
-
-# Presenton is served same-origin under this prefix (T-1.1).
-_EDITOR_BASE_PATH = "/editor"
-# The ref stored when registration did not yield a real engine template.
-_STOCK_TEMPLATE_REF = "default"
-
-
-def _preview_url(t: Template) -> str | None:
-    """Link that previews this template's layouts in the slide editor, or None.
-
-    Composed from `presenton_template_ref` -- the id the ENGINE issued -- not from
-    `logical_id`, which is a Postgres UUID Presenton has never seen. The templates page
-    previously built this URL from `logical_id` and got a truthful "Template not found":
-    the same defect T-1.2 fixed for the generation deep link, on a second surface.
-
-    None when the registration fell back, because "default" is not a real engine
-    template and previewing it would show layouts the user did not upload.
-    """
-    ref = t.presenton_template_ref
-    if not ref or ref == _STOCK_TEMPLATE_REF:
-        return None
-    return f"{_EDITOR_BASE_PATH}/template-preview?id={quote(str(ref))}"
 
 
 def _to_response(t: Template) -> TemplateResponse:
@@ -60,10 +44,9 @@ def _to_response(t: Template) -> TemplateResponse:
         brand_tokens=t.brand_tokens,
         status=t.status,
         has_pptx=t.source_pptx_uri is not None,
-        registration_status=t.registration_status,
-        registration_error=t.registration_error,
-        preview_url=_preview_url(t),
-        thumbnail_urls=t.slide_image_urls,
+        catalog_status=t.catalog_status,
+        catalog_error=t.catalog_error,
+        catalog_reviewed=t.catalog_reviewed_at is not None,
         created_at=t.created_at,
     )
 
@@ -78,7 +61,7 @@ def _parse_brand_tokens(raw: str) -> dict:
     return value
 
 
-@router.post("", response_model=TemplateResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post("", response_model=TemplateResponse, status_code=status.HTTP_201_CREATED)
 async def create_template(
     name: str = Form(..., min_length=1),
     brand_tokens: str = Form(default="{}"),
@@ -86,9 +69,10 @@ async def create_template(
     principal: Principal = Depends(require_admin),
     service: TemplateService = Depends(get_template_service),
 ) -> TemplateResponse:
-    """202, not 201 (TM-2): the row is created, but registration is queued, not
-    done -- the response's `registration_status` is `pending`, same shape as
-    `POST /sources` and `POST /generations` reporting `queued` immediately."""
+    """201: the row is created and cataloguing enqueued before this returns,
+    but `catalog_status` in the response is `"cataloguing"`, not terminal --
+    poll `GET /templates` (or watch `catalog_status`) for `"ready"`/`"failed"`.
+    """
     pptx_filename = file.filename if file is not None else None
     pptx_content = await file.read() if file is not None else None
     template = await service.create(
@@ -111,7 +95,7 @@ def list_templates(
 
 
 @router.delete("/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_template(
+def delete_template(
     template_id: uuid.UUID,
     principal: Principal = Depends(require_admin),
     service: TemplateService = Depends(get_template_service),
@@ -119,24 +103,56 @@ async def delete_template(
     """TM-5. Refuses (409) if any version of this template is pinned by a
     Generation -- see `TemplateService.delete` for why that check spans every
     version, not just the latest."""
-    await service.delete(template_id, actor_user_id=principal.user_id)
+    service.delete(template_id, actor_user_id=principal.user_id)
 
 
-@router.post("/{template_id}/reregister", response_model=TemplateResponse)
-async def reregister_template(
+@router.get("/{template_id}/catalog", response_model=DesignCatalog)
+def get_template_catalog(
+    template_id: uuid.UUID,
+    principal: Principal = Depends(require_admin),
+    repo: TemplateRepository = Depends(get_template_repository),
+) -> DesignCatalog:
+    """LD-4: the LLM's design catalog, for the admin review screen.
+
+    `require_admin`, not `require_viewer`: this is the review surface
+    itself -- an author choosing a template only needs `catalog_status` off
+    the list endpoint, not the raw per-anchor detail an admin corrects.
+    """
+    template = repo.latest(template_id)
+    if template is None:
+        raise NotFoundError("Template not found.")
+    if not template.slide_catalog:
+        raise ValidationError(
+            "This template has not been catalogued yet, or cataloguing produced nothing usable.",
+            code="catalog_not_ready",
+        )
+    return DesignCatalog.model_validate(template.slide_catalog)
+
+
+@router.post("/{template_id}/recatalog", response_model=TemplateResponse)
+async def recatalog_template(
     template_id: uuid.UUID,
     principal: Principal = Depends(require_admin),
     service: TemplateService = Depends(get_template_service),
 ) -> TemplateResponse:
-    """Retry engine registration from the template's already-stored PPTX.
+    """Re-run LD-2 cataloguing against the template's stored `.pptx`."""
+    return _to_response(await service.recatalog(template_id, actor_user_id=principal.user_id))
 
-    Repairs templates whose registration failed -- notably every template created
-    before T-1.3, when the request omitted two fields the engine declares required.
-    The response carries the new `registration_status`, so a still-failing attempt is
-    legible rather than silent.
-    """
+
+@router.post("/{template_id}/catalog/review", response_model=TemplateResponse)
+def review_template_catalog(
+    template_id: uuid.UUID,
+    payload: CatalogReviewRequest,
+    principal: Principal = Depends(require_admin),
+    service: TemplateService = Depends(get_template_service),
+) -> TemplateResponse:
+    """LD-4 / L3: mark the catalog reviewed, optionally replacing it with an
+    admin's corrections, and approve the template -- see
+    `TemplateService.review_catalog`. A template cannot be planned against
+    (Phase C, LD-9) until this has been called at least once since the last
+    successful cataloguing run."""
     return _to_response(
-        await service.reregister(template_id, actor_user_id=principal.user_id)
+        service.review_catalog(template_id, designs=payload.designs, actor_user_id=principal.user_id)
     )
 
 
@@ -158,4 +174,3 @@ async def extract_template_tokens(
         confidence_score=0.95,
         summary=summary,
     )
-

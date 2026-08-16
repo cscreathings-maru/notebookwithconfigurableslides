@@ -21,49 +21,40 @@ from src.api import deps as api_deps
 from src.core.db import SessionLocal
 from src.main import app
 from src.models import Generation, GenerationStatus
-from src.registry.registration import run_template_registration
-from src.registry.repository import TemplateRepository
 from tests.conftest import Fixtures, auth
-from tests.fakes import FakeObjectStore, FakePresenton
+from tests.fakes import FakeObjectStore, catalog_and_approve, usable_pptx_bytes
 
 
 @pytest.fixture(autouse=True)
-def _wire_presenton():
-    app.dependency_overrides[api_deps.get_presenton_client] = lambda: FakePresenton()
+def _wire_object_store():
     app.dependency_overrides[api_deps.get_object_store] = lambda: FakeObjectStore()
     yield
     app.dependency_overrides.clear()
 
 
 async def _approved_template(client, seed: Fixtures, sub: str, name: str = "Brand") -> dict:
+    """Cataloguing is async now (LD-3); a template becomes `approved` only
+    once its catalog is reviewed (L3, `TemplateService.review_catalog`) --
+    runs that full path rather than trusting the create response."""
     resp = client.post(
         "/api/v1/templates",
         data={"name": name, "brand_tokens": json.dumps({"primary": "#101010"})},
         files={
             "file": (
                 "brand.pptx",
-                b"PK\x03\x04 fake pptx",
+                usable_pptx_bytes(),
                 "application/vnd.openxmlformats-officedocument.presentationml.presentation",
             )
         },
         headers=auth(sub),
     )
-    assert resp.status_code == 202, resp.text
-    created = resp.json()
-    with SessionLocal() as db:
-        row = TemplateRepository(db, seed.tenant_a).latest(uuid.UUID(created["id"]))
-        await run_template_registration(
-            db=db,
-            template_row_id=row.id,
-            tenant_id=seed.tenant_a,
-            presenton=FakePresenton(),
-            object_store=FakeObjectStore(),
-        )
-        db.commit()
-    listed = client.get("/api/v1/templates", headers=auth(sub)).json()
-    template = next(t for t in listed if t["id"] == created["id"])
-    assert template["status"] == "approved"  # TM-4
-    return template
+    assert resp.status_code == 201, resp.text
+    template = resp.json()
+    approved = await catalog_and_approve(
+        tenant_id=seed.tenant_a, template_logical_id=template["id"], client=client, headers=auth(sub)
+    )
+    assert approved["status"] == "approved"
+    return approved
 
 
 def _create_profile(client, sub: str, template_id: str, name: str = "Group Management") -> dict:

@@ -1,7 +1,7 @@
 """Registry request/response schemas.
 
-Engine refs (presenton_template_ref) and the stored PPTX key (source_pptx_uri) are
-deliberately absent from response models — they never reach a client.
+The stored PPTX key (source_pptx_uri) is deliberately absent from response
+models — it never reaches a client.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
-from ..models import RegistrationStatus, RegistryStatus, Tone, Verbosity
+from ..models import RegistryStatus, TemplateCatalogStatus, Tone, Verbosity
 
 
 class ProfileWrite(BaseModel):
@@ -59,20 +59,23 @@ class TemplateResponse(BaseModel):
     brand_tokens: dict[str, Any]
     status: RegistryStatus
     has_pptx: bool
-    # Whether the slide engine actually accepted this template. `fallback` means decks
-    # will render with the stock theme, not the uploaded branding. The engine ref itself
-    # stays server-side -- this exposes the outcome, not the handle.
-    registration_status: RegistrationStatus
-    registration_error: str | None
-    # Same-origin link to preview this template's layouts in the slide editor, or None
-    # when there is nothing to preview -- the engine never accepted it. A URL, not the
-    # engine's template id, for the same reason as `Generation.editor_url` (T-1.2).
-    preview_url: str | None
-    # Slide preview images from registration (DG-3), for a template picker. Same-origin
-    # paths already safe to expose -- unlike presenton_template_ref, these were never
-    # engine-internal, only unused.
-    thumbnail_urls: list[str]
+    # LD-3: the LLM cataloguing job's own lifecycle
+    # (`models/registry.py::TemplateCatalogStatus`).
+    catalog_status: TemplateCatalogStatus
+    catalog_error: str | None
+    # LD-4: whether an admin has reviewed (and possibly corrected) the
+    # catalog since it was last produced. Also gates `status == approved`
+    # (`TemplateService.review_catalog`).
+    catalog_reviewed: bool
     created_at: datetime
+
+
+class CatalogReviewRequest(BaseModel):
+    """LD-4: submit a correction to the LLM's catalog, or an empty body to
+    approve it unchanged. `designs`, when present, replaces the stored
+    catalog wholesale -- see `TemplateService.review_catalog`."""
+
+    designs: list[dict[str, Any]] | None = None
 
 
 class ExtractedTokensResponse(BaseModel):

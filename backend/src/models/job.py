@@ -16,7 +16,17 @@ from .base import Base, TimestampMixin, UpdatedAtMixin, UuidPkMixin
 class JobType(str, enum.Enum):
     ingest = "ingest"
     generate = "generate"
+    # RM-3: template inspection is synchronous (deck/inspect.py), so nothing
+    # dispatches this anymore. Left in the Python enum rather than dropped --
+    # removing a Postgres enum value needs the rename/recreate dance
+    # (0013_template_reg_states.py's pattern) and any job row still carrying
+    # this value on a live deployment would make that migration fail outright.
+    # An unused enum value is harmless; a failed migration on deploy is not.
     register_template = "register_template"
+    # LD-3: LLM template cataloguing (deck/catalog.py) runs as a job, not
+    # inline in the request -- an LLM call belongs in a job (see
+    # TemplateCatalogStatus.cataloguing's docstring).
+    catalog_template = "catalog_template"
 
 
 class JobStatus(str, enum.Enum):

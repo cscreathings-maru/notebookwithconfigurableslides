@@ -3,7 +3,7 @@
  *
  * `id` (Bahasa Indonesia) is the default — the product targets Indonesian users.
  * `en` is the fallback and the source of truth for message keys. Language *names*
- * (not codes) are what the AI-content backend expects (Presenton, guide/chat).
+ * (not codes) are what the AI-content backend expects (deck planner, guide/chat).
  */
 
 export type Locale = "id" | "en";

@@ -7,12 +7,68 @@ live engine, MinIO, Redis, or Arq.
 
 from __future__ import annotations
 
+import io
+import uuid
 from collections.abc import Collection
 from typing import Any
 
 from src.engines.open_notebook import SourceProgress
-from src.engines.presenton import TemplateRegistration
-from src.models import RegistrationStatus
+
+
+def usable_pptx_bytes() -> bytes:
+    """A real, valid `.pptx` with actual SLIDES, not just layouts.
+
+    `python-pptx`'s bare `Presentation()` (the old go-to test fixture) ships
+    layouts but ZERO slides -- `deck/catalog.py::catalog_template` correctly
+    refuses that (nothing to catalogue), where the old geometric
+    `deck/inspect.py` was happy reading layouts alone. Every test that just
+    needs "a working template" for the Phase C pipeline should build one with
+    this, not the bare default.
+    """
+    from pptx import Presentation
+
+    prs = Presentation()
+    title_slide = prs.slides.add_slide(prs.slide_layouts[0])
+    title_slide.shapes.title.text = "Cover"
+
+    content_slide = prs.slides.add_slide(prs.slide_layouts[1])
+    content_slide.shapes.title.text = "Content"
+    content_slide.placeholders[1].text_frame.text = "Point one"
+
+    buf = io.BytesIO()
+    prs.save(buf)
+    return buf.getvalue()
+
+
+async def catalog_and_approve(*, tenant_id: uuid.UUID, template_logical_id: str, client, headers: dict) -> dict:
+    """Runs LD-2 cataloguing directly (no live Arq worker in this harness --
+    same posture as `test_ingestion.py::_run_ingest` calling the service
+    function instead of the task wrapper) and then approves the catalog via
+    the real review endpoint (L3), so the template lands `status: approved`
+    the way `TemplateService.review_catalog` actually requires. Returns the
+    final template JSON.
+    """
+    from src.core.db import SessionLocal
+    from src.deck.catalog import catalog_template
+    from src.deck.dump import dump_presentation
+    from src.models import Template
+    from src.registry.repository import TemplateRepository
+    from src.registry.service import apply_catalog_result
+
+    logical_id = uuid.UUID(template_logical_id)
+    with SessionLocal() as db:
+        row = db.query(Template).filter(Template.logical_id == logical_id).one()
+        pptx_bytes = FakeObjectStore().get_bytes(key=row.source_pptx_uri)
+        dumps = dump_presentation(pptx_bytes)
+        catalog, _usage = await catalog_template(dumps=dumps, llm=FakeLlm(), provider_config={})
+        template = TemplateRepository(db, tenant_id).get(row.id)
+        apply_catalog_result(template, catalog=catalog, error=None)
+        db.add(template)
+        db.commit()
+
+    resp = client.post(f"/api/v1/templates/{template_logical_id}/catalog/review", json={}, headers=headers)
+    assert resp.status_code == 200, resp.text
+    return resp.json()
 
 
 class FakeObjectStore:
@@ -182,6 +238,98 @@ class FakeLlm:
         ]
         return FreeformOutlineLlmResult(sections=sections, tokens_in=90, tokens_out=60)
 
+    async def catalog_template(
+        self,
+        *,
+        slide_dump_text,
+        slide_indexes,
+        provider_config,
+        model_override=None,
+    ):
+        """LD-2 fake: deterministic-shape catalog. A slide whose dump text
+        contains a `[picture]` shape and no `[text]` shape is classified
+        `usable=False` (an image library / pure decoration); every other
+        slide gets one `title` anchor (its first `[text]` shape id found in
+        the dump) plus, when a second `[text]` shape exists, one
+        `item_1_body` anchor -- enough structure for a test to assert
+        `catalog_template()` never invents an anchor id absent from the dump,
+        without depending on real model output."""
+        from src.deck.catalog import CatalogLlmResult
+
+        self.calls.append("catalog_template")
+        designs = []
+        blocks = slide_dump_text.split("\n\nSLIDE ")
+        for i, block in enumerate(blocks):
+            text = block if i == 0 else "SLIDE " + block
+            idx = slide_indexes[i] if i < len(slide_indexes) else None
+            if idx is None:
+                continue
+            shape_lines = [
+                line for line in text.splitlines() if line.strip().startswith("shape ")
+            ]
+            text_ids = [
+                line.split()[1] for line in shape_lines if "[text" in line and 'text="' in line
+            ]
+            has_picture = any("[picture" in line for line in shape_lines)
+            if not text_ids:
+                designs.append(
+                    {
+                        "slide_index": idx,
+                        "role": "logo_library" if has_picture else "blank",
+                        "usable": False,
+                        "reason": "no replaceable text content on this slide",
+                        "anchors": [],
+                    }
+                )
+                continue
+            anchors = [{"anchor_id": text_ids[0], "purpose": "title"}]
+            if len(text_ids) > 1:
+                anchors.append({"anchor_id": text_ids[1], "purpose": "item_1_body"})
+            designs.append(
+                {
+                    "slide_index": idx,
+                    "role": "cover" if i == 0 else "bullets",
+                    "usable": True,
+                    "reason": None,
+                    "anchors": anchors,
+                }
+            )
+        return CatalogLlmResult(raw_designs=designs, tokens_in=200, tokens_out=120)
+
+    async def plan_deck(
+        self,
+        *,
+        content,
+        catalog,
+        n_slides_hint,
+        tone,
+        density,
+        language,
+        provider_config,
+        model_override=None,
+    ):
+        """LD-6 fake: one slide per non-empty paragraph, cycling through the
+        catalog's usable designs so a test can assert `plan_deck()` never
+        emits a `design_id` or `anchor_id` absent from the catalog it was
+        given, without depending on real model output. Writes into the
+        FIRST anchor of the chosen design only -- deliberately partial (real
+        content rarely fills every anchor), which exercises the
+        "skip anchors with nothing to say" path in `deck/plan.py`."""
+        from src.deck.plan import PlanLlmResult
+
+        self.calls.append("plan_deck")
+        usable = [d for d in catalog if d.get("anchors")]
+        if not usable:
+            return PlanLlmResult(raw_slides=[], notes=None, tokens_in=80, tokens_out=0)
+
+        paragraphs = [p.strip() for p in content.split("\n\n") if p.strip()] or [content.strip() or "Presentation"]
+        slides = []
+        for i, paragraph in enumerate(paragraphs):
+            design = usable[i % len(usable)]
+            first_anchor = design["anchors"][0]["anchor_id"]
+            slides.append({"design_id": design["design_id"], "anchor_texts": {first_anchor: paragraph[:200]}})
+        return PlanLlmResult(raw_slides=slides, notes=f"planned {len(slides)} slide(s)", tokens_in=220, tokens_out=140)
+
     async def chat(
         self,
         *,
@@ -223,104 +371,3 @@ class FakeLlm:
         else:
             text = "Grounded overview: revenue grew 12% YoY based on the sources."
         return ChatAnswer(text=text, tokens_in=100, tokens_out=50)
-
-
-def _pptx_from_markdown(content: str, slides_markdown: Any, n_slides: int) -> bytes:
-    """Build a REAL PPTX from the orchestrator's params so the artifact-level
-    consistency checker has a genuine deck to inspect: a title slide plus one slide
-    per `## ` heading (title) with its `- ` bullets as body text. The total is padded
-    to `n_slides` so the fake honors the requested count the way Presenton does.
-
-    `slides_markdown` is Presenton's string[] (one block per slide); a bare string
-    is tolerated for older callers."""
-    import io
-
-    from pptx import Presentation
-
-    prs = Presentation()
-    title_layout = prs.slide_layouts[0]
-    body_layout = prs.slide_layouts[1]
-
-    title_slide = prs.slides.add_slide(title_layout)
-    title_slide.shapes.title.text = content or "Presentation"
-
-    blocks = slides_markdown if isinstance(slides_markdown, list) else [slides_markdown or ""]
-    current_body: Any = None
-    for raw in "\n".join(blocks).splitlines():
-        line = raw.strip()
-        if line.startswith("## "):
-            slide = prs.slides.add_slide(body_layout)
-            slide.shapes.title.text = line[3:].strip()
-            current_body = slide.placeholders[1].text_frame
-            current_body.text = ""
-        elif line.startswith("- ") and current_body is not None:
-            para = current_body.add_paragraph()
-            para.text = line[2:].strip()
-
-    # Honor the requested slide count (Presenton pads within the profile's range).
-    while len(prs.slides) < max(n_slides, 1):
-        filler = prs.slides.add_slide(body_layout)
-        filler.shapes.title.text = "Appendix"
-
-    buffer = io.BytesIO()
-    prs.save(buffer)
-    return buffer.getvalue()
-
-
-class FakePresenton:
-    """Fake of the Presenton client surface (registry + generation)."""
-
-    def __init__(self, *, ref_prefix: str = "tref", register_error: str | None = None) -> None:
-        self.ref_prefix = ref_prefix
-        # When set, registration reports `failed` with this reason (T-1.6).
-        self.register_error = register_error
-        self.registered: list[dict[str, Any]] = []
-        self.deleted_refs: list[str] = []
-        self.generate_calls: list[dict[str, Any]] = []
-        self.files: dict[str, bytes] = {}
-
-    async def register_template(
-        self,
-        *,
-        name: str,
-        pptx_bytes: bytes | None = None,
-        pptx_filename: str | None = None,
-    ) -> TemplateRegistration:
-        """Mirrors the real client: the PPTX *is* the brand (T-1.3).
-
-        Without a deck there is nothing for the engine to derive colours, fonts or
-        layouts from, so registration reports `no_source` (TM-3) rather than success.
-        """
-        self.registered.append({"name": name, "pptx_filename": pptx_filename})
-        if self.register_error is not None:
-            return TemplateRegistration.rejected(self.register_error)
-        if not pptx_bytes:
-            return TemplateRegistration.without_source()
-        return TemplateRegistration(
-            ref=f"{self.ref_prefix}_{name}",
-            status=RegistrationStatus.registered,
-            error=None,
-            slide_image_urls=[f"/app_data/{name}-slide-1.png", f"/app_data/{name}-slide-2.png"],
-        )
-
-    async def delete_template(self, *, ref: str) -> None:
-        self.deleted_refs.append(ref)
-
-    async def generate(self, *, params: dict[str, Any]) -> dict[str, Any]:
-        self.generate_calls.append(params)
-        pid = f"pres_{len(self.generate_calls)}"
-        export_as = str(params.get("export_as", "pptx")).lower()
-        path = f"/app_data/{pid}.{export_as}"
-        # Presenton returns one file in the requested format per generate call.
-        if export_as == "pdf":
-            self.files[path] = b"%PDF-1.4 fake-pdf"
-        else:
-            self.files[path] = _pptx_from_markdown(
-                params.get("content", ""),
-                params.get("slides_markdown", ""),
-                int(params.get("n_slides", 0)),
-            )
-        return {"presentation_id": pid, "path": path, "edit_path": f"/edit/{pid}"}
-
-    async def download(self, *, path: str) -> bytes:
-        return self.files.get(path, b"")

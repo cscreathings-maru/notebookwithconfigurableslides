@@ -1,6 +1,6 @@
 """Languages router — the AI output language options for the Studio dropdown.
 
-Presenton (and the guide/chat prompts) take a language NAME, not an ISO code.
+The deck planner (and the guide/chat prompts) take a language NAME, not an ISO code.
 Configured via DEFAULT_LANGUAGE + LANGUAGES; the default is listed first.
 """
 

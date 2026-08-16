@@ -1,4 +1,4 @@
-"""Artifact inspection — read facts back out of the deck Presenton actually produced.
+"""Artifact inspection — read facts back out of the deck `deck/renderer.py` actually produced.
 
 The consistency gate must judge the *produced* PPTX, not just the plan that drove it
 (otherwise template-applied and slide-count are trivially true). This module opens the

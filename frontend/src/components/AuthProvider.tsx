@@ -82,3 +82,15 @@ export function useAuth(): AuthState {
   if (!ctx) throw new Error("useAuth must be used within AuthProvider");
   return ctx;
 }
+
+/** Session if there is one, `null` outside a provider -- for components that
+ *  merely *adapt* to the signed-in user rather than requiring one.
+ *
+ *  `useAuth` throwing is right for a page that cannot render without a
+ *  session. It is wrong for a leaf that only wants to soften a message for
+ *  non-admins: that leaf would then be unrenderable anywhere without the whole
+ *  auth stack mounted, which is coupling bought for nothing. Callers must
+ *  handle `null` -- and the safe reading of `null` is "not an admin". */
+export function useOptionalAuth(): AuthState | null {
+  return useContext(AuthContext) ?? null;
+}

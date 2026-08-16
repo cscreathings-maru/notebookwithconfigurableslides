@@ -23,6 +23,8 @@ import httpx
 from ..core.config import get_settings
 from ..core.errors import EngineError
 from ..core.logging import get_logger
+from ..deck.catalog import CatalogLlmResult
+from ..deck.plan import PlanLlmResult
 from ..outline.builder import FreeformOutlineLlmResult, LlmResult
 from .base import EngineClient
 
@@ -191,6 +193,105 @@ class LlmClient(EngineClient):
             tokens_out=int(usage.get("completion_tokens", 0)),
         )
 
+    async def catalog_template(
+        self,
+        *,
+        slide_dump_text: str,
+        slide_indexes: list[int],
+        provider_config: dict[str, Any],
+        model_override: str | None = None,
+    ) -> CatalogLlmResult:
+        """LD-2 -- one batch of `deck/dump.py` text -> raw per-slide designs.
+
+        One-time-per-template cost (`ASSESSMENT-LLM-DECK-PLANNING.md` §4): the
+        best model in the tenant's routing, not the cheapest, since this call
+        amortises across every deck the template ever renders.
+        """
+        settings = get_settings()
+        body = await self._complete(
+            messages=_build_catalog_messages(slide_dump_text=slide_dump_text),
+            provider_config=provider_config,
+            temperature=settings.deck_catalog_llm_temperature,
+            max_tokens=settings.deck_catalog_llm_max_tokens,
+            response_format={"type": "json_object"},
+            model_override=model_override,
+        )
+        try:
+            raw = body["choices"][0]["message"]["content"]
+            data = json.loads(raw)
+            raw_designs = data["designs"]
+            if not isinstance(raw_designs, list):
+                raise TypeError("`designs` must be a list")
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise EngineError("LLM returned an unparseable design catalog.") from exc
+
+        usage = body.get("usage", {})
+        return CatalogLlmResult(
+            raw_designs=[d for d in raw_designs if isinstance(d, dict)],
+            tokens_in=int(usage.get("prompt_tokens", 0)),
+            tokens_out=int(usage.get("completion_tokens", 0)),
+        )
+
+    async def plan_deck(
+        self,
+        *,
+        content: str,
+        catalog: list[dict[str, Any]],
+        n_slides_hint: int | None,
+        tone: str,
+        density: str,
+        language: str,
+        provider_config: dict[str, Any],
+        model_override: str | None = None,
+    ) -> PlanLlmResult:
+        """LD-6 -- catalog + content -> one call -> the whole `DeckPlan`.
+
+        Replaces the old role/budget-based `plan_deck` (RM-6) now that
+        `generation/service.py` is cut over to the catalog pipeline (LD-9);
+        the old method and its layout-matching counterpart (`match_layout`,
+        RM-7) are deleted alongside `deck/planner.py`/`deck/matcher.py`
+        (LD-11) -- there is no separate layout-matching call anymore because
+        design selection happens in this SAME call as content.
+
+        Reuses the deck-content settings (`deck_plan_llm_*`) -- same task,
+        same quality bar (Bahasa Indonesia fluency, budget compliance,
+        strict JSON).
+        """
+        settings = get_settings()
+        body = await self._complete(
+            messages=_build_catalog_plan_messages(
+                content=content,
+                catalog=catalog,
+                n_slides_hint=n_slides_hint,
+                tone=tone,
+                density=density,
+                language=language,
+            ),
+            provider_config=provider_config,
+            temperature=settings.deck_plan_llm_temperature,
+            max_tokens=settings.deck_plan_llm_max_tokens,
+            response_format={"type": "json_object"},
+            model_override=model_override,
+        )
+        try:
+            raw = body["choices"][0]["message"]["content"]
+            data = json.loads(raw)
+            raw_slides = data["slides"]
+            if not isinstance(raw_slides, list):
+                raise TypeError("`slides` must be a list")
+        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+            raise EngineError("LLM returned an unparseable deck plan.") from exc
+
+        notes_raw = data.get("notes")
+        notes = (str(notes_raw).strip() or None) if notes_raw is not None else None
+        usage = body.get("usage", {})
+        return PlanLlmResult(
+            raw_slides=[s for s in raw_slides if isinstance(s, dict)],
+            notes=notes,
+            tokens_in=int(usage.get("prompt_tokens", 0)),
+            tokens_out=int(usage.get("completion_tokens", 0)),
+        )
+
     async def chat(
         self,
         *,
@@ -273,6 +374,110 @@ def _build_freeform_outline_messages(
     )
     user = f"Source material:\n{content}\n\nReturn the JSON outline."
     return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _build_catalog_messages(*, slide_dump_text: str) -> list[dict[str, str]]:
+    """LD-2's prompt. Asks the model for exactly two things it is actually
+    good at -- recognition (role, which shapes matter, what they're for) --
+    and nothing it is unreliable at: `capacity` and `char_budget` are computed
+    in `deck/catalog.py` from the shapes the model names, never requested
+    here (module docstring, `deck/catalog.py`)."""
+    system = (
+        "You catalogue a PowerPoint template's slides as a reusable design "
+        "vocabulary for a slide-CLONING renderer -- slides are never rebuilt, "
+        "only reused wholesale with their text replaced. For EACH slide given "
+        "below, identify:\n"
+        "1. `role` -- a short label for what kind of slide this is, e.g. "
+        "cover, divider, two_key_points, three_cards, nine_points, timeline, "
+        "matrix, closing, table, chart, logo_library.\n"
+        "2. `anchors` -- every shape whose text content should be REPLACED "
+        "when this design is reused for new content. For each: `anchor_id` "
+        "(the shape id given in the dump, as a string) and `purpose` -- one "
+        "of title, subtitle, body, item_<N>_title, item_<N>_body, "
+        "visual_caption, other. Use item_1_title/item_1_body, "
+        "item_2_title/item_2_body, etc. for repeated groups such as cards, "
+        "timeline entries or bullet rows, numbering them in reading order "
+        "(left-to-right, top-to-bottom). Do NOT invent an anchor for a shape "
+        "with no text, a page number, a static logo/decoration, or a label "
+        "that must stay fixed (e.g. a chart's axis unit) -- only shapes whose "
+        "CONTENT changes per use.\n"
+        "3. `usable` -- false if this slide has no anchor a renderer could "
+        "fill (pure decoration, an image library, a divider with nothing to "
+        "replace), with a short `reason` explaining why.\n"
+        'Return STRICT JSON: {"designs": [{"slide_index": int, "role": str, '
+        '"usable": bool, "reason": str|null, "anchors": [{"anchor_id": str, '
+        '"purpose": str}, ...]}, ...]} -- exactly one entry per SLIDE given, '
+        "in the order given, referencing that slide's own `slide_index`. No "
+        "prose outside the JSON."
+    )
+    user = f"{slide_dump_text}\n\nReturn the JSON catalog for every SLIDE above."
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
+def _build_catalog_plan_messages(
+    *,
+    content: str,
+    catalog: list[dict[str, Any]],
+    n_slides_hint: int | None,
+    tone: str,
+    density: str,
+    language: str,
+) -> list[dict[str, str]]:
+    """LD-6's prompt. System message (the catalog description) first, content
+    last -- same cache-friendly ordering as `_build_deck_plan_messages`
+    (`COST-AND-MODEL-STRATEGY.md` §4.3): the catalog brief is byte-identical
+    across every generation against the same template, so a provider's
+    prompt cache can hit on it; only the source content changes per call."""
+    designs_desc = (
+        "\n".join(
+            f"- {d['design_id']} (role={d['role']}, capacity={d['capacity']}): "
+            + (
+                ", ".join(
+                    f"{a['anchor_id']}={a['purpose']}"
+                    + (f" <= {a['char_budget']} chars" if a.get("char_budget") else "")
+                    for a in d["anchors"]
+                )
+                or "no anchors"
+            )
+            for d in catalog
+        )
+        or "(no usable designs -- this should not happen; cataloguing should have caught this)"
+    )
+    target = (
+        f"Produce roughly {n_slides_hint} slides."
+        if n_slides_hint
+        else "Choose the number of slides the content actually supports -- "
+        "typically between 4 and 16. Do not pad or truncate to hit a round number."
+    )
+    system = (
+        "You plan a slide deck by choosing which of this template's "
+        "ALREADY-DESIGNED slides to reuse for each piece of content, and what "
+        "to write into it. You never invent layout, colour or font -- a "
+        "separate renderer clones the chosen design exactly as it was "
+        "designed and fills only the anchors you specify; describing "
+        "appearance is wasted effort and will be ignored.\n"
+        f"Available designs:\n{designs_desc}\n"
+        "For each slide you plan: `design_id` must be one of the ids above, "
+        "exactly. `anchor_texts` maps an anchor_id (from that SAME design) to "
+        "the text it should hold -- write to every anchor the design offers "
+        "that your content has something for, and never invent an anchor_id "
+        "the design does not list. Respect the character budget on anchors "
+        "that have one -- it is the physical space the shape occupies, not a "
+        "suggestion; text beyond it will be cut. A design may be reused any "
+        "number of times: if your content for one section has more items "
+        "than a single use of a design can hold, split it across repeated "
+        'uses of the SAME design_id, and suffix the continuation slide\'s '
+        'title anchor\'s text with " (lanjutan)". Order the slides list in '
+        f"the order the deck should read. {target} "
+        f"Tone: {tone}. Verbosity: {density}. Write in {language}. "
+        'Return STRICT JSON: {"slides": [{"design_id": str, "anchor_texts": '
+        '{"<anchor_id>": str, ...}}, ...], "notes": str|null}. No prose '
+        "outside the JSON."
+    )
+    user = f"Source content:\n{content}\n\nReturn the JSON deck plan."
+    return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+
 
 
 def _coerce_points(data: dict[str, Any], section_ids: list[str]) -> dict[str, list[str]]:
