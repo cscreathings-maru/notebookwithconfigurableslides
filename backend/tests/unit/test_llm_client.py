@@ -293,6 +293,75 @@ async def test_talking_points_rejects_unparseable_json() -> None:
         )
 
 
+# --------------------------------------------------------------------------
+# `_extract_json_content` -- the 2026-08-16 production bug: a 200 OK response
+# whose `content` is `null` (observed against moonshotai/kimi-k3 via
+# OpenRouter -- most likely a reasoning-capable model spending its whole
+# completion budget on hidden reasoning tokens before any visible content).
+# `_log_failure` only fires on HTTP >= 400, so this was otherwise invisible
+# without a shell into the worker container.
+# --------------------------------------------------------------------------
+
+
+async def test_null_content_on_a_200_response_raises_engine_error() -> None:
+    """The exact production failure: `content: None` on a 200 response. The
+    old code already converted the resulting `TypeError` from `json.loads`
+    into `EngineError` (it was in the `except` tuple) -- what it did NOT do
+    is say anything about WHY: no log distinguished "the model sent invalid
+    JSON syntax" from "the model sent nothing at all", so diagnosing this in
+    production needed a shell into the worker container and reading a raw
+    traceback. `_extract_json_content` still raises `EngineError` here; the
+    next test is the actual fix -- the diagnostic that traceback lacked."""
+    handler, _seen = _always(
+        200,
+        {
+            "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 12000, "completion_tokens": 6000},
+        },
+    )
+
+    with pytest.raises(EngineError):
+        await _client(handler).catalog_template(
+            slide_dump_text="SLIDE 0\n  shape 1 [text]", slide_indexes=[0], provider_config=PROVIDER
+        )
+
+
+async def test_null_content_logs_finish_reason_and_token_usage_for_diagnosis(caplog) -> None:
+    handler, _seen = _always(
+        200,
+        {
+            "choices": [{"message": {"content": None}, "finish_reason": "length"}],
+            "usage": {"prompt_tokens": 12000, "completion_tokens": 6000},
+        },
+    )
+
+    with caplog.at_level(logging.ERROR, logger="orchestrator.llm"):
+        with pytest.raises(EngineError):
+            await _client(handler).catalog_template(
+                slide_dump_text="SLIDE 0\n  shape 1 [text]", slide_indexes=[0], provider_config=PROVIDER
+            )
+
+    record = next(r for r in caplog.records if r.message == "llm_response_content_empty")
+    assert record.finish_reason == "length"
+    assert record.completion_tokens == 6000
+    assert record.model == PROVIDER["model"]
+
+
+async def test_empty_string_content_is_treated_the_same_as_null() -> None:
+    handler, _seen = _always(200, {"choices": [{"message": {"content": ""}}], "usage": {}})
+
+    with pytest.raises(EngineError):
+        await _client(handler).plan_deck(
+            content="x",
+            catalog=[{"design_id": "d1", "role": "cover", "capacity": 0, "anchors": []}],
+            n_slides_hint=None,
+            tone="default",
+            density="standard",
+            language="English",
+            provider_config=PROVIDER,
+        )
+
+
 def test_model_for_returns_none_when_no_task_override_is_set() -> None:
     """An unset task must behave exactly as before per-task routing existed --
     None means "use the tenant's model", not "use an empty model name"."""

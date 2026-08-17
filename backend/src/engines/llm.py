@@ -121,6 +121,49 @@ class LlmClient(EngineClient):
             },
         )
 
+    @staticmethod
+    def _extract_json_content(body: dict[str, Any], *, model: str, error_message: str) -> Any:
+        """`choices[0].message.content` -> parsed JSON, for every strict-JSON
+        call (`talking_points`, `draft_outline`, `catalog_template`,
+        `plan_deck`) -- centralised because the failure mode this pipeline
+        actually hit in production (2026-08-16, `moonshotai/kimi-k3` via
+        OpenRouter) was a 200 OK response with `content: null`: the
+        completion's token budget was spent before any visible content was
+        emitted -- most likely a reasoning-capable model's hidden "thinking"
+        tokens consuming the whole budget on a large prompt (LD-2's ~12k
+        token template dump). `_log_failure` only fires on HTTP >= 400, which
+        this is not, so that failure was otherwise invisible without a shell
+        into the worker container. Logging `finish_reason`/token usage/a
+        reasoning-field length here means the NEXT occurrence is diagnosable
+        from logs alone.
+        """
+        try:
+            choice = body["choices"][0]
+            message = choice["message"]
+        except (KeyError, IndexError) as exc:
+            raise EngineError(error_message) from exc
+
+        content = message.get("content")
+        if not content:
+            usage = body.get("usage", {})
+            reasoning_field = message.get("reasoning") or message.get("reasoning_content") or ""
+            logger.error(
+                "llm_response_content_empty",
+                extra={
+                    "model": model,
+                    "finish_reason": choice.get("finish_reason"),
+                    "completion_tokens": usage.get("completion_tokens"),
+                    "prompt_tokens": usage.get("prompt_tokens"),
+                    "reasoning_field_length": len(str(reasoning_field)),
+                },
+            )
+            raise EngineError(error_message)
+
+        try:
+            return json.loads(content)
+        except json.JSONDecodeError as exc:
+            raise EngineError(error_message) from exc
+
     async def talking_points(
         self,
         *,
@@ -130,6 +173,7 @@ class LlmClient(EngineClient):
         provider_config: dict[str, Any],
     ) -> LlmResult:
         settings = get_settings()
+        model = provider_config.get("model")
         body = await self._complete(
             messages=_build_messages(section_ids, context, profile),
             provider_config=provider_config,
@@ -137,11 +181,9 @@ class LlmClient(EngineClient):
             max_tokens=settings.outline_llm_max_tokens,
             response_format={"type": "json_object"},
         )
-        try:
-            content = body["choices"][0]["message"]["content"]
-            data = json.loads(content)
-        except (KeyError, IndexError, json.JSONDecodeError) as exc:
-            raise EngineError("LLM returned an unparseable outline response.") from exc
+        data = self._extract_json_content(
+            body, model=model, error_message="LLM returned an unparseable outline response."
+        )
 
         usage = body.get("usage", {})
         return LlmResult(
@@ -168,6 +210,7 @@ class LlmClient(EngineClient):
         than assume compliance the way the governed prompt can.
         """
         settings = get_settings()
+        model = provider_config.get("model")
         body = await self._complete(
             messages=_build_freeform_outline_messages(
                 content, tone, density, n_slides_hint, language
@@ -177,13 +220,14 @@ class LlmClient(EngineClient):
             max_tokens=settings.outline_llm_max_tokens,
             response_format={"type": "json_object"},
         )
+        data = self._extract_json_content(
+            body, model=model, error_message="LLM returned an unparseable outline draft."
+        )
         try:
-            raw = body["choices"][0]["message"]["content"]
-            data = json.loads(raw)
             raw_sections = data["sections"]
             if not isinstance(raw_sections, list):
                 raise TypeError("`sections` must be a list")
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError) as exc:
             raise EngineError("LLM returned an unparseable outline draft.") from exc
 
         usage = body.get("usage", {})
@@ -208,6 +252,7 @@ class LlmClient(EngineClient):
         amortises across every deck the template ever renders.
         """
         settings = get_settings()
+        model = model_override or provider_config.get("model")
         body = await self._complete(
             messages=_build_catalog_messages(slide_dump_text=slide_dump_text),
             provider_config=provider_config,
@@ -216,13 +261,14 @@ class LlmClient(EngineClient):
             response_format={"type": "json_object"},
             model_override=model_override,
         )
+        data = self._extract_json_content(
+            body, model=model, error_message="LLM returned an unparseable design catalog."
+        )
         try:
-            raw = body["choices"][0]["message"]["content"]
-            data = json.loads(raw)
             raw_designs = data["designs"]
             if not isinstance(raw_designs, list):
                 raise TypeError("`designs` must be a list")
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError) as exc:
             raise EngineError("LLM returned an unparseable design catalog.") from exc
 
         usage = body.get("usage", {})
@@ -258,6 +304,7 @@ class LlmClient(EngineClient):
         strict JSON).
         """
         settings = get_settings()
+        model = model_override or provider_config.get("model")
         body = await self._complete(
             messages=_build_catalog_plan_messages(
                 content=content,
@@ -273,13 +320,14 @@ class LlmClient(EngineClient):
             response_format={"type": "json_object"},
             model_override=model_override,
         )
+        data = self._extract_json_content(
+            body, model=model, error_message="LLM returned an unparseable deck plan."
+        )
         try:
-            raw = body["choices"][0]["message"]["content"]
-            data = json.loads(raw)
             raw_slides = data["slides"]
             if not isinstance(raw_slides, list):
                 raise TypeError("`slides` must be a list")
-        except (KeyError, IndexError, TypeError, json.JSONDecodeError) as exc:
+        except (KeyError, TypeError) as exc:
             raise EngineError("LLM returned an unparseable deck plan.") from exc
 
         notes_raw = data.get("notes")

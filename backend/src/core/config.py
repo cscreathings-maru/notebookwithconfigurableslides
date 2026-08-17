@@ -122,8 +122,15 @@ class Settings(BaseSettings):
     # dump.py's slide text -> DesignCatalog. Low temperature: this is
     # classification, not composition, and consistency across a 30-slide
     # template matters more than variety) ---
+    # 16000, not 6000: a reasoning-capable model (confirmed in production
+    # 2026-08-16 against moonshotai/kimi-k3) can spend its ENTIRE completion
+    # budget on hidden reasoning tokens before emitting any visible content,
+    # returning HTTP 200 with `content: null` -- see
+    # `LlmClient._extract_json_content`'s diagnostics. Cataloguing is a
+    # one-time-per-template cost (assessment §4: "there is no reason to
+    # economise there"), so a generous ceiling here is cheap insurance.
     deck_catalog_llm_temperature: float = Field(default=0.1)
-    deck_catalog_llm_max_tokens: int = Field(default=6000)
+    deck_catalog_llm_max_tokens: int = Field(default=16000)
 
     # --- Deck content + design planner (LD-6: ONE call -- content AND design
     # selection together, never layout/colour/font. Replaces RM-6's
@@ -131,8 +138,10 @@ class Settings(BaseSettings):
     # a template's designs are catalogued once at onboarding (LD-2), picking
     # one per section is a small enough judgement to fold into the same call
     # that writes the content -- there is no separate matching step left) ---
+    # 8000, not 4000, for the same reasoning-token-budget risk as cataloguing
+    # above, on a smaller margin since this call recurs per generation.
     deck_plan_llm_temperature: float = Field(default=0.4)
-    deck_plan_llm_max_tokens: int = Field(default=4000)
+    deck_plan_llm_max_tokens: int = Field(default=8000)
 
     # --- Per-task model routing (RM-12, COST-AND-MODEL-STRATEGY.md §6) ---
     # Empty means "use the tenant's configured model". One global model is what
