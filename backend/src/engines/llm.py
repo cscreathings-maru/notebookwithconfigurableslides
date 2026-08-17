@@ -103,7 +103,18 @@ class LlmClient(EngineClient):
 
         if resp.status_code >= 400:
             self._log_failure(resp, model=model)
-            raise EngineError("LLM provider request failed.")
+            # The hint, when we have one, becomes the raised message too --
+            # not just a log line. These are OUR OWN static strings (never
+            # the provider's response body, which can carry the API key), so
+            # the no-leak posture holds while the failure stops being
+            # actionable-only-to-whoever-can-read-container-logs.
+            #
+            # Found the hard way (2026-08-17): an OpenRouter account out of
+            # credit surfaced to the admin as "LLM provider request failed."
+            # on the Templates page. The 402 and its "you can only afford 690
+            # tokens" detail were in the worker log and nowhere else, so
+            # diagnosing a billing problem took a shell on the server.
+            raise EngineError(_FAILURE_HINTS.get(resp.status_code, "LLM provider request failed") + ".")
         return resp.json()
 
     @staticmethod

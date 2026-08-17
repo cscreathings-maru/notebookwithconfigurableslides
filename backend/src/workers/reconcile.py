@@ -29,6 +29,7 @@ no-op rather than a duplicate.
 
 from __future__ import annotations
 
+import uuid
 from datetime import timedelta
 
 from sqlalchemy import and_, or_, select
@@ -101,14 +102,21 @@ async def reenqueue_stranded_jobs(enqueuer) -> int:
         return 0
 
     pushed = 0
+    undispatchable: list[uuid.UUID] = []
     for job in stranded:
         task_name = _TASK_BY_TYPE.get(job.type)
         if task_name is None:
-            # An unknown type cannot be dispatched; say so rather than skipping quietly.
+            # No task handles this type -- the row can NEVER run. Seen in
+            # production 2026-08-17: a `register_template` job left over from
+            # before that pipeline was deleted, re-found and re-logged at
+            # ERROR on every single worker start. Recording it as terminally
+            # failed retires it honestly instead of generating permanent
+            # noise that would eventually mask a real error.
             logger.error(
                 "reconcile_unknown_job_type",
                 extra={"job_id": str(job.id), "type": str(job.type)},
             )
+            undispatchable.append(job.id)
             continue
         try:
             await enqueuer.enqueue_job(
@@ -125,8 +133,18 @@ async def reenqueue_stranded_jobs(enqueuer) -> int:
                 extra={"job_id": str(job.id), "error": f"{type(exc).__name__}: {exc}"},
             )
 
+    if undispatchable:
+        with SessionLocal() as db:
+            for job_id in undispatchable:
+                job = db.get(Job, job_id)
+                if job is not None:
+                    job.status = JobStatus.failed
+                    job.error = f"No worker task handles job type '{job.type.value}'; it can never run."
+                    db.add(job)
+            db.commit()
+
     logger.warning(
         "reconcile_reenqueued_stranded_jobs",
-        extra={"found": len(stranded), "enqueued": pushed},
+        extra={"found": len(stranded), "enqueued": pushed, "retired": len(undispatchable)},
     )
     return pushed

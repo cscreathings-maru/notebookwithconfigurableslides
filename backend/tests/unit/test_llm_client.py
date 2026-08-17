@@ -186,7 +186,16 @@ async def test_failure_log_carries_status_model_and_body(caplog) -> None:
 
 
 async def test_client_facing_message_leaks_no_provider_detail() -> None:
-    # Arrange
+    """The raised message must never echo the provider's response body --
+    that body routinely contains the API key, the upstream URL, or internal
+    identifiers. It carries one of our OWN static hints instead.
+
+    Asserted as a property rather than an exact string: the message became
+    actionable in 2026-08-17 (an out-of-credit account previously surfaced as
+    an opaque "LLM provider request failed."), and pinning the literal made
+    that improvement look like a regression when it was the point.
+    """
+    # Arrange -- a provider body carrying a secret, on a status we have a hint for
     handler, _seen = _always(401, text="key sk-or-secret-123 is revoked")
 
     # Act
@@ -194,8 +203,29 @@ async def test_client_facing_message_leaks_no_provider_detail() -> None:
         await _client(handler).chat(system="s", user="u", provider_config=PROVIDER)
 
     # Assert
-    assert "sk-or-secret-123" not in str(excinfo.value)
-    assert str(excinfo.value) == "LLM provider request failed."
+    message = str(excinfo.value)
+    assert "sk-or-secret-123" not in message
+    assert "revoked" not in message, "the provider's own wording must not pass through"
+    assert message == "LLM provider rejected the API key."
+
+
+async def test_an_out_of_credit_account_says_so_instead_of_failing_opaquely() -> None:
+    """The 2026-08-17 production failure: cataloguing died on a 402 and the
+    admin's only clue was `catalog_error: "LLM provider request failed."`.
+    The status is diagnostic on its own -- say what it means."""
+    # Arrange
+    handler, _seen = _always(
+        402, text='{"error":{"message":"This request requires more credits, or fewer max_tokens."}}'
+    )
+
+    # Act
+    with pytest.raises(EngineError) as excinfo:
+        await _client(handler).catalog_template(
+            slide_dump_text="SLIDE 0", slide_indexes=[0], provider_config=PROVIDER
+        )
+
+    # Assert
+    assert str(excinfo.value) == "LLM provider account has insufficient credit."
 
 
 # --------------------------------------------------------------------------

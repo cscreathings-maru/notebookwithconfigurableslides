@@ -179,6 +179,32 @@ async def test_a_long_dead_running_job_is_recovered(seed) -> None:
     assert ("run_catalog_template", str(dead)) in [(c[0], c[1]) for c in enqueuer.calls]
 
 
+async def test_a_job_no_task_can_run_is_retired_instead_of_re_logged_forever(seed) -> None:
+    """`register_template` jobs outlived the pipeline that handled them. Each
+    worker start re-found them and logged ERROR again -- permanent noise that
+    would eventually mask a real failure (seen in production 2026-08-17).
+    They can never run, so they are recorded as failed and stop coming back."""
+    # Arrange
+    orphan = _job(seed.tenant_a, type_=JobType.register_template)
+    enqueuer = RecordingEnqueuer()
+
+    # Act
+    await reenqueue_stranded_jobs(enqueuer)
+
+    # Assert -- never dispatched...
+    assert str(orphan) not in enqueuer.enqueued_ids()
+    # ...and now terminal, with a reason, so the next run does not see it
+    with SessionLocal() as db:
+        row = db.get(Job, orphan)
+        assert row.status == JobStatus.failed
+        assert "can never run" in row.error
+
+    # Act again -- the second pass must find nothing to complain about
+    second = RecordingEnqueuer()
+    await reenqueue_stranded_jobs(second)
+    assert str(orphan) not in second.enqueued_ids()
+
+
 async def test_a_running_job_just_inside_the_threshold_is_left_alone(seed) -> None:
     """Guards the boundary in the safe direction: when in doubt, assume the
     job is alive and let it finish rather than risk running it twice."""
