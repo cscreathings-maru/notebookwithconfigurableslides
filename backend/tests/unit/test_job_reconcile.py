@@ -16,11 +16,13 @@ committed, the queue entry gone.
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 
 import pytest
 
 from src.core.db import SessionLocal
 from src.models import Job, JobStatus, JobType
+from src.models.base import utcnow
 from src.workers.reconcile import reenqueue_stranded_jobs
 
 
@@ -41,7 +43,14 @@ class RecordingEnqueuer:
         self.calls.append((task_name, str(job_id), _job_id))
 
 
-def _job(tenant_id: uuid.UUID, *, status=JobStatus.queued, attempts=0, type_=JobType.ingest):
+def _job(
+    tenant_id: uuid.UUID,
+    *,
+    status=JobStatus.queued,
+    attempts=0,
+    type_=JobType.ingest,
+    updated_at=None,
+):
     with SessionLocal() as db:
         job = Job(
             tenant_id=tenant_id,
@@ -52,6 +61,11 @@ def _job(tenant_id: uuid.UUID, *, status=JobStatus.queued, attempts=0, type_=Job
             ref_id=uuid.uuid4(),
             progress={"step": "queued", "percent": 0},
         )
+        if updated_at is not None:
+            # Backdate the row to simulate a worker that claimed this job and
+            # then died holding it. `default`/`onupdate` only fire when the
+            # attribute is unset, so an explicit value survives the insert.
+            job.updated_at = updated_at
         db.add(job)
         db.commit()
         return job.id
@@ -110,8 +124,8 @@ async def test_jobs_already_being_worked_are_left_alone(seed) -> None:
     assert str(in_flight) not in enqueuer.enqueued_ids()
 
 
-@pytest.mark.parametrize("status", [JobStatus.succeeded, JobStatus.failed, JobStatus.running])
-async def test_only_queued_jobs_are_reconciled(seed, status) -> None:
+@pytest.mark.parametrize("status", [JobStatus.succeeded, JobStatus.failed])
+async def test_finished_jobs_are_never_reconciled(seed, status) -> None:
     # Arrange
     terminal = _job(seed.tenant_a, status=status)
     enqueuer = RecordingEnqueuer()
@@ -121,6 +135,67 @@ async def test_only_queued_jobs_are_reconciled(seed, status) -> None:
 
     # Assert
     assert str(terminal) not in enqueuer.enqueued_ids()
+
+
+# --------------------------------------------------------------------------
+# Stale `running` jobs (2026-08-17). A worker that dies mid-flight leaves the
+# row at `running` forever: nothing retried it, nothing surfaced it, and the
+# template it belonged to showed a permanent "cataloguing…" spinner whose only
+# escape was a shell on the server.
+# --------------------------------------------------------------------------
+
+
+async def test_a_freshly_running_job_is_left_alone(seed) -> None:
+    """A worker is holding it RIGHT NOW -- re-enqueuing would double-run it."""
+    # Arrange
+    live = _job(seed.tenant_a, status=JobStatus.running, attempts=1)
+    enqueuer = RecordingEnqueuer()
+
+    # Act
+    await reenqueue_stranded_jobs(enqueuer)
+
+    # Assert
+    assert str(live) not in enqueuer.enqueued_ids()
+
+
+async def test_a_long_dead_running_job_is_recovered(seed) -> None:
+    """The production failure: `status=running` since yesterday, no worker
+    holds it, nothing was ever going to move it again."""
+    # Arrange
+    dead = _job(
+        seed.tenant_a,
+        status=JobStatus.running,
+        attempts=1,
+        type_=JobType.catalog_template,
+        updated_at=utcnow() - timedelta(hours=6),
+    )
+    enqueuer = RecordingEnqueuer()
+
+    # Act
+    await reenqueue_stranded_jobs(enqueuer)
+
+    # Assert
+    assert str(dead) in enqueuer.enqueued_ids()
+    assert ("run_catalog_template", str(dead)) in [(c[0], c[1]) for c in enqueuer.calls]
+
+
+async def test_a_running_job_just_inside_the_threshold_is_left_alone(seed) -> None:
+    """Guards the boundary in the safe direction: when in doubt, assume the
+    job is alive and let it finish rather than risk running it twice."""
+    # Arrange -- 29 minutes old, threshold is 30
+    borderline = _job(
+        seed.tenant_a,
+        status=JobStatus.running,
+        attempts=1,
+        updated_at=utcnow() - timedelta(minutes=29),
+    )
+    enqueuer = RecordingEnqueuer()
+
+    # Act
+    await reenqueue_stranded_jobs(enqueuer)
+
+    # Assert
+    assert str(borderline) not in enqueuer.enqueued_ids()
 
 
 async def test_reconciliation_returns_a_count_not_an_error(seed) -> None:

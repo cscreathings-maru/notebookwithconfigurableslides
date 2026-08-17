@@ -66,7 +66,7 @@ decks at once, size up to **KVM4** (4 vCPU / 16 GB). For 1-at-a-time demoing, KV
 
 **Lite mode has NO authentication.** Whoever can reach the app is an admin and can
 run generations against **your** OpenRouter/OpenAI keys (i.e. spend your money).
-The compose binds Traefik to `127.0.0.1:8080` (localhost only) on purpose. Pick one
+The compose binds Traefik to `127.0.0.1:8099` (localhost only) on purpose. Pick one
 exposure model:
 
 | Option | Use when | Public? | Auth |
@@ -74,7 +74,7 @@ exposure model:
 | **A. SSH tunnel (recommended)** | Private demo, just you / your team | No | SSH keys |
 | **B. Domain + TLS + Basic Auth** | You need to share a URL | Yes | Traefik basic auth over HTTPS |
 
-Do **not** simply publish port 8080 to the internet with no auth. Section 8 covers
+Do **not** simply publish port 8099 to the internet with no auth. Section 8 covers
 both options.
 
 ---
@@ -166,7 +166,7 @@ Fill **at minimum** (see `.env.lite.example` for the full list):
 | `MINIO_ROOT_PASSWORD` | strong password |
 | `OPEN_NOTEBOOK_ENCRYPTION_KEY` | `openssl rand -hex 16` |
 | `PRESENTON_AUTH_PASSWORD` | strong password |
-| `PUBLIC_BASE_URL` | Option A: `http://localhost:8080` · Option B: `https://your.domain` |
+| `PUBLIC_BASE_URL` | Option A: `http://localhost:8099` · Option B: `https://your.domain` |
 
 Generate secrets quickly:
 ```bash
@@ -211,9 +211,9 @@ tunnel** (never open 8502 to the internet), then re-comment and `up -d`.
 
 On **your laptop** (not the VPS):
 ```bash
-ssh -L 8080:localhost:8080 deploy@YOUR_VPS_IP
+ssh -L 8099:localhost:8099 deploy@YOUR_VPS_IP
 ```
-Leave that terminal open, then browse to **http://localhost:8080** locally. Traffic
+Leave that terminal open, then browse to **http://localhost:8099** locally. Traffic
 is encrypted by SSH; nothing is exposed publicly. This needs **no domain, no TLS,
 no extra auth** — ideal for confirming the demo before you finalize the SaaS.
 
@@ -304,6 +304,41 @@ docker compose -f deploy/docker-compose.lite.yml run --rm init
 # Full reset (wipes DB + storage + engine data)
 docker compose -f deploy/docker-compose.lite.yml down -v
 ```
+
+### 8.1 A template stuck on "cataloguing…"
+
+Cataloguing is an async LLM job. If it never finishes, work down this list —
+each step tells you something the previous one could not.
+
+```bash
+# 1. What does the DB actually say? (logical_id is the id the API takes --
+#    NOT the job id, which is a different UUID entirely.)
+docker compose -f deploy/docker-compose.lite.yml exec postgres \
+  psql -U orch -d orchestrator \
+  -c "SELECT logical_id, name, catalog_status, catalog_error FROM template ORDER BY created_at DESC;"
+
+# 2. What happened to its job?
+docker compose -f deploy/docker-compose.lite.yml exec postgres \
+  psql -U orch -d orchestrator \
+  -c "SELECT id, status, attempts, error, updated_at FROM job WHERE type='catalog_template' ORDER BY created_at DESC LIMIT 5;"
+
+# 3. What did the worker say? `llm_response_content_empty` means the model
+#    returned a 200 with no content (see its finish_reason/token counts).
+docker compose -f deploy/docker-compose.lite.yml logs worker --since 2h | grep -iE "catalog|llm_response|reconcile"
+
+# 4. Retry it. Use the *logical_id* from step 1, and note the port is 8099.
+#    `-i` matters: without it a connection failure prints nothing at all and
+#    looks exactly like a silent no-op.
+curl -i -X POST http://localhost:8099/api/v1/templates/<LOGICAL_ID>/recatalog
+```
+
+The same retry is available in the UI — the **Re-catalogue** button on the
+Templates page, shown while a template is `cataloguing` or `failed`. Prefer it;
+the curl above is for when the UI itself is unreachable.
+
+A job whose worker died mid-run is also recovered automatically: the next
+worker start re-enqueues any job left at `running` for more than 30 minutes
+(`src/workers/reconcile.py`).
 
 ### Backups (worth doing before a demo)
 ```bash

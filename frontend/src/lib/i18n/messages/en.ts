@@ -233,6 +233,8 @@ export const en = {
   "catalog.recatalog": "Re-catalogue",
   "catalog.recataloguing": "Re-cataloguing…",
   "catalog.recatalogFailed": "Could not start re-cataloguing.",
+  "catalog.recatalogStuckHint":
+    "Stuck on this step? Start a fresh cataloguing run — the previous one is abandoned, not duplicated.",
   "catalog.reviewTitle": "Review the design catalog",
   "catalog.reviewSubtitle":
     "An LLM read every slide in this template and labelled its role and replaceable content. Check each design before it's used to plan decks -- errors here recur on every deck until corrected.",

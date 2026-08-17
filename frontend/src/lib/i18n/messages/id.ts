@@ -233,6 +233,8 @@ export const id: Partial<Record<MessageKey, string>> = {
   "catalog.recatalog": "Buat ulang katalog",
   "catalog.recataloguing": "Membuat ulang katalog…",
   "catalog.recatalogFailed": "Tidak dapat memulai pembuatan ulang katalog.",
+  "catalog.recatalogStuckHint":
+    "Tersangkut di langkah ini? Mulai proses pembuatan katalog yang baru — proses sebelumnya ditinggalkan, bukan digandakan.",
   "catalog.reviewTitle": "Tinjau katalog desain",
   "catalog.reviewSubtitle":
     "LLM membaca setiap slide pada templat ini dan memberi label peran serta konten yang dapat diganti. Periksa setiap desain sebelum dipakai merencanakan deck -- kesalahan di sini akan terus muncul di setiap deck sampai diperbaiki.",

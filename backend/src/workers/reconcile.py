@@ -15,18 +15,28 @@ the guide empty, and chat truthfully saying it had no sources.
 T-1.4 fixed enqueuing *before* the row was committed. This fixes the opposite end: the
 row committed, the queue entry gone.
 
-Runs on worker startup, which is exactly when a Redis restart is most likely to have just
-happened. Idempotent: Arq's `_job_id` is the job's idempotency key, so re-enqueuing a job
-that *is* still queued is a no-op rather than a duplicate.
+**2026-08-17**: a second, distinct way to strand a job showed up in production — a
+`catalog_template` job sat at `status=running` indefinitely after its worker re-raised
+instead of recording a terminal state. `running` was outside this module's search, so
+nothing recovered it and nothing surfaced it; the template showed a permanent
+"cataloguing…" spinner. Stale `running` rows are now reconciled too (`_RUNNING_STALE_AFTER`).
+
+Runs on worker startup, which is exactly when a Redis restart — or the crash that killed
+the previous worker mid-job — is most likely to have just happened. Idempotent: Arq's
+`_job_id` is the job's idempotency key, so re-enqueuing a job that *is* still queued is a
+no-op rather than a duplicate.
 """
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from datetime import timedelta
+
+from sqlalchemy import and_, or_, select
 
 from ..core.db import SessionLocal
 from ..core.logging import get_logger
 from ..models import Job, JobStatus, JobType
+from ..models.base import utcnow
 
 logger = get_logger("orchestrator.worker")
 
@@ -43,23 +53,45 @@ _TASK_BY_TYPE: dict[JobType, str] = {
 # Re-enqueuing is safe in both cases because the idempotency key deduplicates.
 _STRANDED_STATUS = JobStatus.queued
 
+# How long a job may sit at `running` before it is presumed dead (2026-08-17).
+#
+# `running` means "a worker claimed this and started it". If that worker then dies
+# mid-flight — OOM, SIGKILL, `docker compose up` during a deploy, or (as happened
+# here) a task that re-raised instead of recording a terminal state — the row stays
+# `running` forever. Nothing retried it, nothing surfaced it, and the template it
+# belonged to showed an infinite spinner with no way out but a shell on the box.
+#
+# Unlike the `queued` case above, age IS the right signal here: a live job is
+# indistinguishable from a dead one except by how long it has sat. The threshold is
+# far beyond any real task (template cataloguing, the slowest, runs ~95s against a
+# 30-slide deck), so a job past it is dead by any reasonable reading — while still
+# leaving room for a genuinely long ingest, and for a second worker replica running
+# something legitimately, should this ever scale past one.
+_RUNNING_STALE_AFTER = timedelta(minutes=30)
+
 
 async def reenqueue_stranded_jobs(enqueuer) -> int:
-    """Re-enqueue every never-attempted queued job. Returns how many were pushed.
+    """Re-enqueue every stranded job. Returns how many were pushed.
 
-    Deliberately not filtered by age. A stranded job is stranded whether it is one minute
-    or three days old, and a time window would only add a way to miss one.
+    Two shapes of stranded, for two different reasons (see the constants above):
+    a never-attempted `queued` job whose Redis entry was lost, and a `running` job
+    whose worker died holding it.
     """
     if enqueuer is None:
         logger.warning("reconcile_skipped_no_enqueuer")
         return 0
 
+    stale_before = utcnow() - _RUNNING_STALE_AFTER
     with SessionLocal() as db:
         stranded = list(
             db.execute(
                 select(Job)
-                .where(Job.status == _STRANDED_STATUS)
-                .where(Job.attempts == 0)
+                .where(
+                    or_(
+                        and_(Job.status == _STRANDED_STATUS, Job.attempts == 0),
+                        and_(Job.status == JobStatus.running, Job.updated_at < stale_before),
+                    )
+                )
                 .order_by(Job.created_at)
             ).scalars()
         )

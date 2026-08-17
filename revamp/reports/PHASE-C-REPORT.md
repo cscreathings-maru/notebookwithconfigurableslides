@@ -33,8 +33,18 @@ where the full pipeline first exists end to end.
 | G5 | One design used 4× renders 4 intact copies | **PASS** | Already met by `deck/clone.py`; re-confirmed end to end in `test_deck_renderer.py::test_one_design_used_four_times_renders_four_intact_copies` |
 | G6 | An admin can correct a mis-catalogued design before the template is usable | **PASS** | Phase A, re-confirmed still working after the cutover — `test_registry.py::test_reviewing_the_catalog_approves_the_template` |
 | G7 | A malformed LLM plan is rejected and retried, never rendered into a broken deck | **PASS** | Phase B, unaffected by Phase C's wiring — `test_deck_plan.py::test_retries_once_then_surfaces_when_nothing_is_ever_usable` |
-| G8 | Determinism: same plan + template → byte-comparable output | **PASS** | `test_deck_renderer.py::test_rendering_is_deterministic` |
+| G8 | Determinism: same plan + template → byte-comparable output | **PASS, with the claim corrected** | `test_deck_renderer.py::test_rendering_is_deterministic` — see the correction below |
 | G9 | Suites green; ruff/eslint/typecheck clean | **PASS** | §4 |
+
+> **Correction, 2026-08-17.** As first written, G8 was verified by asserting the two
+> renders' raw bytes were equal — and that test was **flaky**, passing roughly 4 runs in 5.
+> A `.pptx` is a ZIP, and ZIP entries embed a modification timestamp, so two renders
+> straddling a second boundary differ in bytes while being the same document. The original
+> "byte-comparable output" claim in this table was therefore **overstated**: it had never
+> been reliably true, and a determinism test that is itself non-deterministic proves
+> nothing. The test now compares the ZIP's *contents* — every part name and every part's
+> bytes — which is the guarantee that actually matters (same slides, same XML, same
+> embedded images) and is stable across repeated runs. G8 stands, on the corrected claim.
 
 **Overall: 8 of 9 automatable criteria PASS. G2 is explicitly, by the plan's own design, not closable by this report** — §5 of the plan states this outright: *"G1, G2 and G6 cannot be closed by automated tests... these gates name a human."* G1 and G6 are closed here because they reduce to properties a test CAN observe (logo bytes present; an admin correction persists and is reflected). G2 — "looks like the template" — is irreducibly a judgment call. See §8 for exactly what is needed to close it and why this session could not.
 

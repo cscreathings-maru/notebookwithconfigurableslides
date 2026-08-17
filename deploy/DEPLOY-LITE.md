@@ -125,7 +125,7 @@ docker compose -f deploy/docker-compose.lite.yml logs -f init          # migrate
 docker compose -f deploy/docker-compose.lite.yml ps                    # service health
 ```
 
-Open **http://localhost:8080** — you land straight in the Projects workspace, no
+Open **http://localhost:8099** — you land straight in the Projects workspace, no
 login.
 
 ### 4.1 One-time: configure Open Notebook embeddings
@@ -209,10 +209,10 @@ docker compose -f deploy/docker-compose.lite.yml logs -f worker
 
 ## 8. Security notes for the demo
 
-- Traefik binds to **127.0.0.1:8080** only — the stack is not exposed off the
+- Traefik binds to **127.0.0.1:8099** only — the stack is not exposed off the
   host. To demo from another machine, front it with your own reverse proxy/TLS;
   do **not** publish it raw.
-- Lite mode has **no authentication** by design. Anyone who reaches port 8080 is
+- Lite mode has **no authentication** by design. Anyone who reaches port 8099 is
   an admin. Keep it local or behind a trusted network only.
 - Engines (`open-notebook`, `presenton`, `postgres`, `redis`, `minio`,
   `surrealdb`) publish **no host ports**; only Traefik does.

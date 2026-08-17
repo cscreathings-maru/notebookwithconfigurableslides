@@ -255,17 +255,28 @@ export default function TemplatesPage() {
                           {t("catalog.review")}
                         </button>
                       )}
-                      {tpl.catalog_status === "failed" && tpl.has_pptx && (
-                        <button
-                          type="button"
-                          onClick={() => recatalog(tpl.id)}
-                          disabled={recataloguing === tpl.id}
-                          className="btn-secondary py-1.5 px-3 text-xs flex items-center gap-1 border-red-300 text-red-700 hover:bg-red-50 dark:text-red-300 disabled:opacity-50"
-                          title={tpl.catalog_error ?? undefined}
-                        >
-                          ↻ {recataloguing === tpl.id ? t("catalog.recataloguing") : t("catalog.recatalog")}
-                        </button>
-                      )}
+                      {/* Offered while `cataloguing` too, not only on `failed`:
+                          a job whose worker died mid-flight leaves the row at
+                          `cataloguing` forever, and gating this button on
+                          `failed` meant the only escape was a shell on the
+                          server (hit in production 2026-08-17). An admin can
+                          always restart a run they believe is stuck. */}
+                      {(tpl.catalog_status === "failed" || tpl.catalog_status === "cataloguing") &&
+                        tpl.has_pptx && (
+                          <button
+                            type="button"
+                            onClick={() => recatalog(tpl.id)}
+                            disabled={recataloguing === tpl.id}
+                            className={`py-1.5 px-3 text-xs flex items-center gap-1 rounded-lg border transition disabled:opacity-50 ${
+                              tpl.catalog_status === "failed"
+                                ? "btn-secondary border-red-300 text-red-700 hover:bg-red-50 dark:text-red-300"
+                                : "btn-secondary"
+                            }`}
+                            title={tpl.catalog_error ?? t("catalog.recatalogStuckHint")}
+                          >
+                            ↻ {recataloguing === tpl.id ? t("catalog.recataloguing") : t("catalog.recatalog")}
+                          </button>
+                        )}
                       <button
                         type="button"
                         onClick={() => deleteTemplate(tpl.id)}
