@@ -13,7 +13,7 @@ import uuid
 from typing import Any
 
 from ..core.db import SessionLocal
-from ..core.errors import NotFoundError, ValidationError
+from ..core.errors import EngineError, NotFoundError, ValidationError
 from ..core.logging import get_logger
 from ..engines.open_notebook import OpenNotebookClient
 from ..ingestion.repository import SourceRepository
@@ -129,10 +129,26 @@ async def run_catalog_template(
 
     Mirrors `run_ingest`'s shape: the engine client (here `LlmClient`) is
     constructed directly, not via FastAPI DI, since Arq tasks run outside the
-    request/response cycle. A malformed-content outcome (`ValidationError` --
-    e.g. no usable design in the whole template) is TERMINAL and recorded on
-    the row; anything else (a transient LLM/network failure) propagates so
-    Arq retries, matching `run_ingest`'s own transient-vs-terminal split.
+    request/response cycle.
+
+    `ValidationError` (e.g. no usable design in the whole template) and
+    `EngineError` (the LLM call itself failed -- bad/empty response, or a
+    request that already exhausted `EngineClient`'s own low-level
+    timeout/backoff/circuit-breaker retries) are BOTH terminal: recorded on
+    the row, job marked `failed`, never re-raised for Arq to retry blindly.
+    Only a genuinely unexpected exception (a bug, not a modelled failure
+    mode) propagates so Arq retries.
+
+    This used to treat `EngineError` as transient and re-raise it, matching
+    `run_ingest`'s split -- found wrong in production 2026-08-17: a
+    `catalog_template` job whose LLM call kept returning an unparseable
+    response stayed at `status="running"` in Postgres FOREVER, because
+    nothing ever ran the code that marks a row `failed` -- Arq's own retry
+    bookkeeping is invisible to the database. `run_ingest`'s transient case
+    is a real network layer with no retry of its own (`OpenNotebookClient`);
+    `LlmClient` already has one (`engines/base.py`'s `EngineClient`), so by
+    the time an `EngineError` reaches here, another blind retry rarely helps
+    and a silently-stuck row is worse than a visible, retriable failure.
     """
     from ..deck.catalog import catalog_template
     from ..deck.dump import dump_presentation
@@ -183,13 +199,14 @@ async def run_catalog_template(
                 provider_config=provider_config,
                 model_override=llm_config.model_for("deck_catalog"),
             )
-        except ValidationError as exc:
+        except (ValidationError, EngineError) as exc:
+            # Both terminal -- see the module docstring's 2026-08-17 note.
             apply_catalog_result(template, catalog=None, error=str(exc))
             db.add(template)
             db.commit()
             _finish_job(db, job_uuid, tenant_uuid, JobStatus.failed, str(exc))
             return
-        except Exception as exc:  # transient engine/transport error -> let Arq retry
+        except Exception as exc:  # a genuine bug, not a modelled failure -> let Arq retry
             db.rollback()
             logger.warning("catalog_template_retryable_error", extra={"job_id": job_id, "error": str(exc)})
             raise

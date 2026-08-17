@@ -81,10 +81,10 @@ class TemplateService:
         self.object_store = object_store
         self.job_service = job_service
 
-    async def _dispatch_cataloguing(self, template: Template) -> None:
+    async def _dispatch_cataloguing(self, template: Template, *, idempotency_key: str) -> None:
         job, _ = self.job_service.create(
             job_type=JobType.catalog_template,
-            idempotency_key=f"catalog_template:{template.id}",
+            idempotency_key=idempotency_key,
             ref_id=template.id,
         )
         await self.job_service.commit_and_dispatch(job)
@@ -141,14 +141,29 @@ class TemplateService:
         )
 
         if pptx_content is not None:
-            await self._dispatch_cataloguing(template)
+            # Stable per-template key: guards against a double form-submit
+            # (two near-simultaneous `create()` calls for the same upload)
+            # collapsing into one job, not into two.
+            await self._dispatch_cataloguing(template, idempotency_key=f"catalog_template:{template.id}")
 
         return template
 
     async def recatalog(self, logical_id: uuid.UUID, *, actor_user_id: uuid.UUID | None = None) -> Template:
         """Re-run LD-2 cataloguing against the template's stored `.pptx`
         (the LLM counterpart to `reinspect`). Parks at `cataloguing` again --
-        the caller polls, same as `create`."""
+        the caller polls, same as `create`.
+
+        The idempotency key carries a fresh nonce on every call, deliberately
+        NOT the stable `catalog_template:{template.id}` `create()` uses:
+        reusing that key meant `JobService.create()`'s own dedupe always
+        found the ORIGINAL job (however old, however permanently stuck) and
+        returned it unchanged -- `recatalog` could never actually start a new
+        attempt. An admin clicking "re-catalogue" is a deliberate retry, not
+        an accidental double-submit to guard against (bug found in
+        production 2026-08-17: a template stuck `cataloguing` forever
+        because every `/recatalog` call silently no-opped against the first,
+        already-failed job).
+        """
         latest = self.repo.latest(logical_id)
         if latest is None:
             raise NotFoundError("Template not found.")
@@ -161,7 +176,9 @@ class TemplateService:
         self.repo.db.add(latest)
         self.repo.db.flush()
         self._audit("template.recatalogued", latest, actor_user_id)
-        await self._dispatch_cataloguing(latest)
+        await self._dispatch_cataloguing(
+            latest, idempotency_key=f"catalog_template:{latest.id}:{uuid.uuid4().hex}"
+        )
         return latest
 
     def review_catalog(

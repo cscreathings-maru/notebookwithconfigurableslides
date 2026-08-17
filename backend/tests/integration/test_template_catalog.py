@@ -20,6 +20,7 @@ from pptx import Presentation
 
 from src.api import deps as api_deps
 from src.core.db import SessionLocal
+from src.core.errors import EngineError
 from src.deck.catalog import catalog_template
 from src.deck.dump import dump_presentation
 from src.main import app
@@ -27,8 +28,21 @@ from src.models import Job, JobStatus, JobType, Template
 from src.registry.repository import TemplateRepository
 from src.registry.service import apply_catalog_result
 from src.registry.house_template import HOUSE_TEMPLATE_PATH
+from src.workers.tasks import run_catalog_template
 from tests.conftest import Fixtures, auth
 from tests.fakes import FakeLlm, FakeObjectStore
+
+PROVIDER = {
+    "provider": "openrouter",
+    "base_url": "https://api.openrouter.ai/v1",
+    "model": "moonshotai/kimi-k3",
+    "api_key": "sk-or-test",
+}
+
+
+def _set_byok(client, seed: Fixtures) -> None:
+    resp = client.put("/api/v1/tenant/llm-config", json=PROVIDER, headers=auth(seed.admin_a_sub))
+    assert resp.status_code == 200, resp.text
 
 
 @pytest.fixture(autouse=True)
@@ -274,3 +288,79 @@ async def test_terminal_failure_never_leaves_the_job_row_silently_stuck(client, 
     updated = next(t for t in listing if t["id"] == template["id"])
     assert updated["catalog_status"] == "failed"
     assert updated["catalog_error"]
+
+
+class _RaisingLlm:
+    """Stands in for a provider whose response has `content: null` -- the
+    2026-08-17 production failure. Raises the SAME `EngineError`
+    `LlmClient.catalog_template` raises in that case."""
+
+    async def catalog_template(self, **kwargs):
+        raise EngineError("LLM returned an unparseable design catalog.")
+
+
+@pytest.mark.asyncio
+async def test_run_catalog_template_marks_job_and_template_failed_on_engine_error(
+    client, seed: Fixtures, monkeypatch
+) -> None:
+    """The exact production bug (2026-08-17): `run_catalog_template` used to
+    treat `EngineError` as transient and re-raise it for Arq to retry,
+    NEVER calling the code that marks the `Job` row `failed` -- so a
+    template whose LLM call kept failing stayed at `catalog_status:
+    "cataloguing"` / `Job.status: "running"` forever, invisible to an admin
+    and to any UI. Both must now land in a terminal, visible state."""
+    _set_byok(client, seed)
+    template = _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    row_id = _row_id(uuid.UUID(template["id"]))
+    job = _catalog_job(seed.tenant_a, row_id)
+
+    monkeypatch.setattr("src.engines.llm.LlmClient", _RaisingLlm)
+    monkeypatch.setattr("src.workers.tasks.get_object_store", lambda: FakeObjectStore())
+
+    await run_catalog_template({}, str(job.id), str(seed.tenant_a))
+
+    with SessionLocal() as db:
+        refreshed_job = db.get(Job, job.id)
+        assert refreshed_job.status == JobStatus.failed
+        assert refreshed_job.error
+
+    listing = client.get("/api/v1/templates", headers=auth(seed.admin_a_sub)).json()
+    updated = next(t for t in listing if t["id"] == template["id"])
+    assert updated["catalog_status"] == "failed"
+    assert updated["catalog_error"]
+
+
+@pytest.mark.asyncio
+async def test_recatalog_after_a_failure_creates_a_genuinely_new_job(
+    client, seed: Fixtures, monkeypatch
+) -> None:
+    """The exact production bug's other half (2026-08-17): `recatalog`'s
+    idempotency key was `catalog_template:{template.id}` -- IDENTICAL to the
+    original `create()` call's key, since the template row id never changes.
+    `JobService.create()`'s own dedupe then always found the ORIGINAL
+    (however old, however permanently failed) job and returned it unchanged
+    -- `/recatalog` could click all day and never actually start a new
+    attempt. Each call must now produce its own distinct job row."""
+    _set_byok(client, seed)
+    template = _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    row_id = _row_id(uuid.UUID(template["id"]))
+    first_job = _catalog_job(seed.tenant_a, row_id)
+
+    monkeypatch.setattr("src.engines.llm.LlmClient", _RaisingLlm)
+    monkeypatch.setattr("src.workers.tasks.get_object_store", lambda: FakeObjectStore())
+    await run_catalog_template({}, str(first_job.id), str(seed.tenant_a))
+
+    recatalog_resp = client.post(
+        f"/api/v1/templates/{template['id']}/recatalog", headers=auth(seed.admin_a_sub)
+    )
+    assert recatalog_resp.status_code == 200, recatalog_resp.text
+
+    with SessionLocal() as db:
+        jobs = (
+            db.query(Job)
+            .filter(Job.tenant_id == seed.tenant_a, Job.type == JobType.catalog_template, Job.ref_id == row_id)
+            .all()
+        )
+        assert len(jobs) == 2, "recatalog must create a NEW job row, not reuse the failed one"
+        assert len({j.idempotency_key for j in jobs}) == 2
+        assert any(j.id != first_job.id and j.status == JobStatus.queued for j in jobs)
