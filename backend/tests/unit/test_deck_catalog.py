@@ -130,9 +130,50 @@ async def test_empty_template_is_rejected() -> None:
 @pytest.mark.asyncio
 async def test_chunking_splits_across_multiple_llm_calls(bri_dumps: tuple) -> None:
     llm = FakeLlm()
-    catalog, _ = await catalog_template(dumps=bri_dumps, llm=llm, provider_config={}, batch_size=10)
+    catalog, _ = await catalog_template(
+        dumps=bri_dumps, llm=llm, provider_config={}, max_chars_per_call=20_000
+    )
     assert len(catalog.designs) == 30
-    assert llm.calls.count("catalog_template") == 3  # 30 slides / batch_size=10
+    # 48k characters of dump cannot fit in 20k-character calls.
+    assert llm.calls.count("catalog_template") >= 3
+
+
+@pytest.mark.asyncio
+async def test_the_default_batch_keeps_every_prompt_small(bri_dumps: tuple) -> None:
+    """The whole template in one call built a 21k-token prompt, and asking a
+    reasoning model to classify 30 slides at once made it spend its entire
+    output budget thinking (production, 2026-08-23). Reasoning scales with
+    how much is asked at once, so the guarantee that matters is per-CALL
+    size, not total size."""
+
+    class SizeRecordingLlm(FakeLlm):
+        def __init__(self) -> None:
+            super().__init__()
+            self.prompt_chars: list[int] = []
+
+        async def catalog_template(self, *, slide_dump_text, slide_indexes, provider_config, model_override=None):
+            self.prompt_chars.append(len(slide_dump_text))
+            return await super().catalog_template(
+                slide_dump_text=slide_dump_text,
+                slide_indexes=slide_indexes,
+                provider_config=provider_config,
+                model_override=model_override,
+            )
+
+    limit = 6000
+    llm = SizeRecordingLlm()
+    catalog, _ = await catalog_template(
+        dumps=bri_dumps, llm=llm, provider_config={}, max_chars_per_call=limit
+    )
+
+    assert len(catalog.designs) == 30, "chunking must not lose a slide"
+    assert len(llm.prompt_chars) > 1, "the default must actually chunk, not send one giant call"
+
+    # Every call is inside the limit, except one holding a single slide that
+    # exceeds it alone (BRI's 7,960-char timeline) -- a slide cannot be split.
+    single_slide_calls = [n for n, size in enumerate(llm.prompt_chars) if size > limit]
+    assert len(single_slide_calls) <= 1, "only an oversized SINGLE slide may exceed the limit"
+    assert max(llm.prompt_chars) < 2 * limit, "no call may be wildly over the limit"
 
 
 def test_derive_capacity_counts_distinct_item_groups() -> None:

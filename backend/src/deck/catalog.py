@@ -40,11 +40,17 @@ logger = get_logger("orchestrator.deck.catalog")
 
 DESIGN_CATALOG_SCHEMA_VERSION = "1.0"
 
-# Slides per LLM call. The real BRI template (30 slides, ~12k tokens per
-# `test_deck_dump.py`) fits one call comfortably under a ~32k context model;
-# this exists so a larger template degrades to multiple calls instead of a
-# truncated response (assessment §7's per-slide chunking requirement).
-_DEFAULT_BATCH_SIZE = 30
+# Characters of slide dump per LLM call (~4 chars/token). Callers pass
+# `settings.deck_catalog_max_chars_per_call` (`workers/tasks.py`); this
+# default matches it for direct/test callers.
+#
+# The whole template used to go in one request. That fits a 32k context on
+# paper, but context was never the binding constraint: a 21k-token prompt
+# asking a REASONING model to classify 30 slides at once made it spend its
+# entire 16k output budget on internal reasoning and return `content: null`
+# (production, 2026-08-23). Less asked per call means less to reason about
+# per call, which is what keeps the answer inside the budget.
+_DEFAULT_MAX_CHARS_PER_CALL = 6000
 
 _ITEM_GROUP_RE = re.compile(r"^item_(\d+)_")
 
@@ -246,13 +252,42 @@ def _coerce_design(raw: Any, *, dump: SlideDump) -> Design:
     )
 
 
+def _batch_by_size(dumps: tuple[SlideDump, ...], max_chars: int) -> list[list[SlideDump]]:
+    """Group slides into calls bounded by rendered PROMPT SIZE, not by count.
+
+    Slide sizes within one real template vary by more than 20x -- BRI's cover
+    is 341 characters, its 95-shape timeline is 7,960 -- so "N slides per
+    call" bounds nothing that matters. Batching by size is what actually
+    keeps each request small enough that a model has room to answer.
+
+    A slide larger than `max_chars` on its own is sent alone rather than
+    dropped or truncated: a slide is the smallest unit the catalog can
+    describe, and losing one would leave a silent hole in the vocabulary.
+    """
+    batches: list[list[SlideDump]] = []
+    current: list[SlideDump] = []
+    current_chars = 0
+
+    for dump in dumps:
+        size = len(render_slide_dump_text(dump))
+        if current and current_chars + size > max_chars:
+            batches.append(current)
+            current, current_chars = [], 0
+        current.append(dump)
+        current_chars += size
+
+    if current:
+        batches.append(current)
+    return batches
+
+
 async def catalog_template(
     *,
     dumps: tuple[SlideDump, ...],
     llm: CatalogLlm,
     provider_config: dict[str, Any],
     model_override: str | None = None,
-    batch_size: int = _DEFAULT_BATCH_SIZE,
+    max_chars_per_call: int = _DEFAULT_MAX_CHARS_PER_CALL,
 ) -> tuple[DesignCatalog, CatalogUsage]:
     """`deck/dump.py` output -> LLM -> validated `DesignCatalog`.
 
@@ -267,8 +302,7 @@ async def catalog_template(
     designs: list[Design] = []
     tokens_in = tokens_out = 0
 
-    for start in range(0, len(dumps), batch_size):
-        batch = dumps[start : start + batch_size]
+    for batch in _batch_by_size(dumps, max_chars_per_call):
         text = "\n\n".join(render_slide_dump_text(d) for d in batch)
         result = await llm.catalog_template(
             slide_dump_text=text,

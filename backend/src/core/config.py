@@ -131,6 +131,22 @@ class Settings(BaseSettings):
     # economise there"), so a generous ceiling here is cheap insurance.
     deck_catalog_llm_temperature: float = Field(default=0.1)
     deck_catalog_llm_max_tokens: int = Field(default=16000)
+    # How much slide dump may go into ONE cataloguing call, in characters
+    # (~4 chars/token). Sending the whole template at once built a 21k-token
+    # prompt, and a reasoning model asked to classify 30 slides in one go
+    # spent its ENTIRE 16k output budget thinking -- 56k characters of
+    # reasoning, `finish_reason: "length"`, `content: null` (production,
+    # 2026-08-23, moonshotai/kimi-k3). Reasoning scales with how much is asked
+    # at once, so asking less per call is the fix that holds for any model.
+    # This is the plan's own documented contingency
+    # (`ASSESSMENT-LLM-DECK-PLANNING.md` §7: "Chunk the dump per slide -- more
+    # calls, still one-time"); cataloguing runs once per template, so the
+    # extra round trips cost effectively nothing.
+    #
+    # Bounded by SIZE, not slide count: within one real template a slide
+    # ranges from 341 to 7,960 characters (BRI's cover vs. its 95-shape
+    # timeline), so "6 slides" bounds nothing that matters.
+    deck_catalog_max_chars_per_call: int = Field(default=6000, ge=500)
 
     # --- Deck content + design planner (LD-6: ONE call -- content AND design
     # selection together, never layout/colour/font. Replaces RM-6's

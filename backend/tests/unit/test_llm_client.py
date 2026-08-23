@@ -377,6 +377,59 @@ async def test_null_content_logs_finish_reason_and_token_usage_for_diagnosis(cap
     assert record.model == PROVIDER["model"]
 
 
+async def test_a_reasoning_model_that_ran_out_of_budget_says_which_lever_to_pull() -> None:
+    """Production 2026-08-23: kimi-k3 returned 200 with `finish_reason:
+    "length"`, `completion_tokens: 16000` and 56k characters of `reasoning` --
+    it thought until the budget was gone and never wrote the answer. The
+    generic "unparseable design catalog" message sent the operator hunting a
+    JSON bug that did not exist. The message must name the real cause."""
+    # Arrange
+    handler, _seen = _always(
+        200,
+        {
+            "choices": [
+                {
+                    "message": {"content": None, "reasoning": "thinking " * 5000},
+                    "finish_reason": "length",
+                }
+            ],
+            "usage": {"prompt_tokens": 21164, "completion_tokens": 16000},
+        },
+    )
+
+    # Act
+    with pytest.raises(EngineError) as excinfo:
+        await _client(handler).catalog_template(
+            slide_dump_text="SLIDE 0", slide_indexes=[0], provider_config=PROVIDER
+        )
+
+    # Assert -- names the cause, the model, and both levers
+    message = str(excinfo.value)
+    assert "output budget" in message
+    assert "internal reasoning" in message
+    assert PROVIDER["model"] in message
+    assert "DECK_CATALOG_MODEL" in message
+
+
+async def test_empty_content_without_a_length_stop_keeps_the_generic_message() -> None:
+    """Only `finish_reason: "length"` implicates the budget. An empty answer
+    for any other reason is a different problem and must not be mislabelled."""
+    # Arrange
+    handler, _seen = _always(
+        200,
+        {"choices": [{"message": {"content": None}, "finish_reason": "stop"}], "usage": {}},
+    )
+
+    # Act
+    with pytest.raises(EngineError) as excinfo:
+        await _client(handler).catalog_template(
+            slide_dump_text="SLIDE 0", slide_indexes=[0], provider_config=PROVIDER
+        )
+
+    # Assert
+    assert str(excinfo.value) == "LLM returned an unparseable design catalog."
+
+
 async def test_empty_string_content_is_treated_the_same_as_null() -> None:
     handler, _seen = _always(200, {"choices": [{"message": {"content": ""}}], "usage": {}})
 

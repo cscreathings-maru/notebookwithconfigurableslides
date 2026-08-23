@@ -157,17 +157,32 @@ class LlmClient(EngineClient):
         content = message.get("content")
         if not content:
             usage = body.get("usage", {})
+            finish_reason = choice.get("finish_reason")
             reasoning_field = message.get("reasoning") or message.get("reasoning_content") or ""
             logger.error(
                 "llm_response_content_empty",
                 extra={
                     "model": model,
-                    "finish_reason": choice.get("finish_reason"),
+                    "finish_reason": finish_reason,
                     "completion_tokens": usage.get("completion_tokens"),
                     "prompt_tokens": usage.get("prompt_tokens"),
                     "reasoning_field_length": len(str(reasoning_field)),
                 },
             )
+            if finish_reason == "length":
+                # Diagnosed in production 2026-08-23: kimi-k3 burned all 16000
+                # completion tokens on 56k characters of internal reasoning and
+                # had none left for the answer. The generic "unparseable"
+                # message sent the admin hunting for a JSON bug that was never
+                # there, so this names the real cause and the two levers.
+                spent_on = " on internal reasoning" if reasoning_field else ""
+                raise EngineError(
+                    f"The model ({model}) used its whole output budget{spent_on} "
+                    "and returned no answer. Cataloguing and planning are "
+                    "classification tasks -- prefer a non-reasoning model "
+                    "(DECK_CATALOG_MODEL / DECK_PLAN_MODEL), or give it more "
+                    "room via the matching max-tokens setting."
+                )
             raise EngineError(error_message)
 
         try:
