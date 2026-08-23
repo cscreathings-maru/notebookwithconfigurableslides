@@ -14,6 +14,7 @@ from __future__ import annotations
 import io
 import json
 import uuid
+from datetime import timedelta
 
 import pytest
 from pptx import Presentation
@@ -25,6 +26,7 @@ from src.deck.catalog import catalog_template
 from src.deck.dump import dump_presentation
 from src.main import app
 from src.models import Job, JobStatus, JobType, Template
+from src.models.base import utcnow
 from src.registry.repository import TemplateRepository
 from src.registry.service import apply_catalog_result
 from src.registry.house_template import HOUSE_TEMPLATE_PATH
@@ -104,7 +106,15 @@ def _catalog_job(tenant_id: uuid.UUID, template_row_id: uuid.UUID) -> Job:
 
 async def _run_catalog_job(tenant_id: uuid.UUID, template_row_id: uuid.UUID, *, llm=None) -> None:
     """Plays `workers/tasks.py::run_catalog_template`'s role without Arq --
-    loads the template, dumps + catalogues it, and applies the result."""
+    loads the template, dumps + catalogues it, applies the result, AND marks
+    the job row succeeded.
+
+    That last step is not decoration: the real task calls `_finish_job`, and a
+    double that skipped it left the job row `queued` forever. Anything that
+    reads job state to decide whether work is in flight
+    (`JobRepository.find_live`) then sees a phantom job that no worker will
+    ever run -- so the double has to retire the row exactly as the worker does.
+    """
     with SessionLocal() as db:
         template = TemplateRepository(db, tenant_id).get(template_row_id)
         pptx_bytes = FakeObjectStore().get_bytes(key=template.source_pptx_uri)
@@ -112,6 +122,19 @@ async def _run_catalog_job(tenant_id: uuid.UUID, template_row_id: uuid.UUID, *, 
         catalog, _usage = await catalog_template(dumps=dumps, llm=llm or FakeLlm(), provider_config={})
         apply_catalog_result(template, catalog=catalog, error=None)
         db.add(template)
+
+        for job in (
+            db.query(Job)
+            .filter(
+                Job.tenant_id == tenant_id,
+                Job.type == JobType.catalog_template,
+                Job.ref_id == template_row_id,
+                Job.status.in_((JobStatus.queued, JobStatus.running)),
+            )
+            .all()
+        ):
+            job.status = JobStatus.succeeded
+            db.add(job)
         db.commit()
 
 
@@ -328,6 +351,58 @@ async def test_run_catalog_template_marks_job_and_template_failed_on_engine_erro
     updated = next(t for t in listing if t["id"] == template["id"])
     assert updated["catalog_status"] == "failed"
     assert updated["catalog_error"]
+
+
+def test_recatalog_does_not_stack_a_second_run_on_a_live_job(client, seed: Fixtures) -> None:
+    """2026-08-23: the Templates page never refreshed, so an admin watching a
+    frozen "cataloguing…" clicked repeatedly -- and every click started
+    another complete catalogue run. Four runs for two templates, ~140k output
+    tokens burned. While a job is genuinely in flight, a click is a no-op."""
+    _set_byok(client, seed)
+    template = _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    row_id = _row_id(uuid.UUID(template["id"]))
+
+    for _ in range(4):
+        resp = client.post(
+            f"/api/v1/templates/{template['id']}/recatalog", headers=auth(seed.admin_a_sub)
+        )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["catalog_status"] == "cataloguing"
+
+    with SessionLocal() as db:
+        jobs = (
+            db.query(Job)
+            .filter(Job.tenant_id == seed.tenant_a, Job.type == JobType.catalog_template, Job.ref_id == row_id)
+            .all()
+        )
+    assert len(jobs) == 1, f"{len(jobs)} jobs queued for one template -- each is a full LLM run"
+
+
+def test_a_stranded_queued_job_does_not_block_recatalog_forever(client, seed: Fixtures) -> None:
+    """`find_live` must age out `queued` jobs too, not just `running` ones. A
+    queued job whose Redis entry was lost sits forever with nobody to run it
+    (the reason `workers/reconcile.py` exists); treating it as permanently
+    "in flight" would make the template permanently unretryable -- the
+    2026-08-17 bug in new clothes."""
+    _set_byok(client, seed)
+    template = _create_template(client, seed.admin_a_sub, "Imported", file=True)
+    row_id = _row_id(uuid.UUID(template["id"]))
+
+    # Age the create-time job past the liveness window without touching status.
+    with SessionLocal() as db:
+        stranded = db.query(Job).filter(Job.ref_id == row_id).one()
+        stranded.updated_at = utcnow() - timedelta(hours=3)
+        db.add(stranded)
+        db.commit()
+
+    resp = client.post(
+        f"/api/v1/templates/{template['id']}/recatalog", headers=auth(seed.admin_a_sub)
+    )
+    assert resp.status_code == 200, resp.text
+
+    with SessionLocal() as db:
+        jobs = db.query(Job).filter(Job.ref_id == row_id).all()
+    assert len(jobs) == 2, "a stranded job must not block a fresh attempt"
 
 
 @pytest.mark.asyncio

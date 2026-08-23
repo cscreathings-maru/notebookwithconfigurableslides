@@ -153,16 +153,22 @@ class TemplateService:
         (the LLM counterpart to `reinspect`). Parks at `cataloguing` again --
         the caller polls, same as `create`.
 
-        The idempotency key carries a fresh nonce on every call, deliberately
-        NOT the stable `catalog_template:{template.id}` `create()` uses:
-        reusing that key meant `JobService.create()`'s own dedupe always
-        found the ORIGINAL job (however old, however permanently stuck) and
-        returned it unchanged -- `recatalog` could never actually start a new
-        attempt. An admin clicking "re-catalogue" is a deliberate retry, not
-        an accidental double-submit to guard against (bug found in
-        production 2026-08-17: a template stuck `cataloguing` forever
-        because every `/recatalog` call silently no-opped against the first,
-        already-failed job).
+        Two failure modes were shipped here before landing on this shape, and
+        both did real damage:
+
+        - A STABLE idempotency key (`catalog_template:{template.id}`, the one
+          `create()` uses) meant `JobService.create()`'s dedupe always found
+          the ORIGINAL job -- however old, however permanently failed -- and
+          returned it unchanged. `/recatalog` could be called all day and
+          never start a new attempt (2026-08-17).
+        - A key with a FRESH nonce every call fixed that and overcorrected: a
+          click always started another full run, so an admin watching a screen
+          that never updated clicked repeatedly and got four complete
+          catalogue runs for two templates (2026-08-23).
+
+        The distinction neither key can express is "is this work actually in
+        flight right now" -- so that is asked directly. A live job means this
+        call is a no-op; anything else earns a genuinely fresh attempt.
         """
         latest = self.repo.latest(logical_id)
         if latest is None:
@@ -171,6 +177,15 @@ class TemplateService:
             raise ValidationError(
                 "This template has no stored .pptx to catalogue.", code="no_source_pptx"
             )
+
+        live = self.job_service.repo.find_live(job_type=JobType.catalog_template, ref_id=latest.id)
+        if live is not None:
+            logger.info(
+                "template_recatalog_already_running",
+                extra={"template_id": str(logical_id), "job_id": str(live.id)},
+            )
+            return latest
+
         latest.catalog_status = TemplateCatalogStatus.cataloguing
         latest.catalog_error = None
         self.repo.db.add(latest)

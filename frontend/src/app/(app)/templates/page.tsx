@@ -43,6 +43,19 @@ export default function TemplatesPage() {
 
   useEffect(() => load(), [load]);
 
+  // Cataloguing finishes in a worker, minutes after the request that started
+  // it, and nothing pushes that to the browser. Without this the page holds
+  // whatever it fetched on mount: a template that finished long ago still
+  // reads "cataloguing…", which is indistinguishable from a hang and is
+  // exactly how an hour got lost (2026-08-23). Only polls while something is
+  // actually in flight, so an idle Templates page makes no requests at all.
+  const isCataloguing = templates.some((tpl) => tpl.catalog_status === "cataloguing");
+  useEffect(() => {
+    if (!isCataloguing) return;
+    const timer = setInterval(load, 5000);
+    return () => clearInterval(timer);
+  }, [isCataloguing, load]);
+
   if (me && me.role !== "admin") {
     return (
       <div className="flex flex-col items-center justify-center py-20 text-center">
@@ -84,9 +97,9 @@ export default function TemplatesPage() {
   };
 
   // LD-3: re-run LLM cataloguing against the stored .pptx -- async, so this
-  // only starts the job; `load()` picks up "cataloguing" and the admin polls
-  // by revisiting the page (same posture as reinspect's terminal response,
-  // just delayed by one round trip since an LLM call cannot be inline).
+  // only starts the job. The poller above then follows it to completion; the
+  // backend refuses to stack a second run on top of one already in flight,
+  // so an impatient double-click costs nothing.
   const recatalog = async (id: string) => {
     setError(null);
     setRecataloguing(id);
