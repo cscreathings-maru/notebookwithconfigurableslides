@@ -147,6 +147,11 @@ class Settings(BaseSettings):
     # ranges from 341 to 7,960 characters (BRI's cover vs. its 95-shape
     # timeline), so "6 slides" bounds nothing that matters.
     deck_catalog_max_chars_per_call: int = Field(default=6000, ge=500)
+    # Cataloguing calls in flight at once. Nine sequential calls at ~80s each
+    # exceeded the worker's job timeout (production, 2026-08-23); the batches
+    # are independent, so they need not queue behind each other. Keep it
+    # modest -- a burst invites provider rate limiting.
+    deck_catalog_concurrency: int = Field(default=4, ge=1, le=16)
 
     # --- Deck content + design planner (LD-6: ONE call -- content AND design
     # selection together, never layout/colour/font. Replaces RM-6's

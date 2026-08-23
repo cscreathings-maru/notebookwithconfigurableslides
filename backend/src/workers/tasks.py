@@ -200,6 +200,7 @@ async def run_catalog_template(
                 provider_config=provider_config,
                 model_override=llm_config.model_for("deck_catalog"),
                 max_chars_per_call=get_settings().deck_catalog_max_chars_per_call,
+                concurrency=get_settings().deck_catalog_concurrency,
             )
         except (ValidationError, EngineError) as exc:
             # Both terminal -- see the module docstring's 2026-08-17 note.

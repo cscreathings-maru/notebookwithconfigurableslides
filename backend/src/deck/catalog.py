@@ -26,6 +26,7 @@ that looks fine until someone opens the file.
 
 from __future__ import annotations
 
+import asyncio
 import re
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -51,6 +52,15 @@ DESIGN_CATALOG_SCHEMA_VERSION = "1.0"
 # (production, 2026-08-23). Less asked per call means less to reason about
 # per call, which is what keeps the answer inside the budget.
 _DEFAULT_MAX_CHARS_PER_CALL = 6000
+
+# Batches in flight at once. Chunking turned one call into nine, and nine
+# SEQUENTIAL calls at ~80s each ran 720s -- past Arq's job timeout, so the
+# job died two thirds of the way through with nothing to show (production,
+# 2026-08-23). The batches are independent by construction (each classifies
+# its own slides, results merge by `slide_index`), so they have no reason to
+# wait for each other. Bounded rather than unbounded: a provider will rate
+# limit a burst of 30, and `EngineClient` retrying 429s would undo the gain.
+_DEFAULT_CONCURRENCY = 4
 
 _ITEM_GROUP_RE = re.compile(r"^item_(\d+)_")
 
@@ -288,6 +298,7 @@ async def catalog_template(
     provider_config: dict[str, Any],
     model_override: str | None = None,
     max_chars_per_call: int = _DEFAULT_MAX_CHARS_PER_CALL,
+    concurrency: int = _DEFAULT_CONCURRENCY,
 ) -> tuple[DesignCatalog, CatalogUsage]:
     """`deck/dump.py` output -> LLM -> validated `DesignCatalog`.
 
@@ -295,21 +306,43 @@ async def catalog_template(
     did not classify, or classified with nothing usable, becomes a `Design`
     with `usable=False` and an honest reason -- visible to the admin review
     (LD-4), never absent from the catalog it is reviewing.
+
+    Batches run concurrently (`_DEFAULT_CONCURRENCY`) but are merged in the
+    template's own slide order, so the catalog reads the same whichever call
+    happens to finish first.
     """
     if not dumps:
         raise ValidationError("Template has no slides to catalogue.")
 
+    batches = _batch_by_size(dumps, max_chars_per_call)
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+    logger.info(
+        "catalog_template_started",
+        extra={"slide_count": len(dumps), "calls": len(batches), "concurrency": concurrency},
+    )
+
+    async def _classify(position: int, batch: list[SlideDump]) -> CatalogLlmResult:
+        async with semaphore:
+            text = "\n\n".join(render_slide_dump_text(d) for d in batch)
+            result = await llm.catalog_template(
+                slide_dump_text=text,
+                slide_indexes=[d.slide_index for d in batch],
+                provider_config=provider_config,
+                model_override=model_override,
+            )
+        # Per-call progress: nine silent minutes is indistinguishable from a
+        # hang, which is exactly how this looked from the outside before.
+        logger.info(
+            "catalog_template_batch_done",
+            extra={"call": position + 1, "of": len(batches), "slides": len(batch)},
+        )
+        return result
+
+    results = await asyncio.gather(*(_classify(i, b) for i, b in enumerate(batches)))
+
     designs: list[Design] = []
     tokens_in = tokens_out = 0
-
-    for batch in _batch_by_size(dumps, max_chars_per_call):
-        text = "\n\n".join(render_slide_dump_text(d) for d in batch)
-        result = await llm.catalog_template(
-            slide_dump_text=text,
-            slide_indexes=[d.slide_index for d in batch],
-            provider_config=provider_config,
-            model_override=model_override,
-        )
+    for batch, result in zip(batches, results, strict=True):
         tokens_in += result.tokens_in
         tokens_out += result.tokens_out
 

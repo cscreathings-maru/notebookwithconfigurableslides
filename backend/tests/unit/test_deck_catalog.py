@@ -176,6 +176,71 @@ async def test_the_default_batch_keeps_every_prompt_small(bri_dumps: tuple) -> N
     assert max(llm.prompt_chars) < 2 * limit, "no call may be wildly over the limit"
 
 
+@pytest.mark.asyncio
+async def test_batches_run_concurrently_not_one_after_another(bri_dumps: tuple) -> None:
+    """Nine sequential calls at ~80s each ran past the worker's job timeout
+    and the whole catalogue was lost (production, 2026-08-23). The batches
+    are independent, so they must overlap rather than queue."""
+    import asyncio
+
+    class SlowLlm(FakeLlm):
+        def __init__(self) -> None:
+            super().__init__()
+            self.in_flight = 0
+            self.peak_in_flight = 0
+
+        async def catalog_template(self, *, slide_dump_text, slide_indexes, provider_config, model_override=None):
+            self.in_flight += 1
+            self.peak_in_flight = max(self.peak_in_flight, self.in_flight)
+            try:
+                await asyncio.sleep(0.02)  # stand in for a slow provider
+                return await super().catalog_template(
+                    slide_dump_text=slide_dump_text,
+                    slide_indexes=slide_indexes,
+                    provider_config=provider_config,
+                    model_override=model_override,
+                )
+            finally:
+                self.in_flight -= 1
+
+    llm = SlowLlm()
+    catalog, _ = await catalog_template(dumps=bri_dumps, llm=llm, provider_config={}, concurrency=4)
+
+    assert len(catalog.designs) == 30
+    assert llm.peak_in_flight > 1, "batches ran strictly one after another"
+    assert llm.peak_in_flight <= 4, "concurrency limit was not respected"
+
+
+@pytest.mark.asyncio
+async def test_concurrency_one_still_works(bri_dumps: tuple) -> None:
+    """The sequential path stays valid -- an operator throttling a rate-limited
+    provider must not lose correctness for it."""
+    llm = FakeLlm()
+    catalog, _ = await catalog_template(dumps=bri_dumps, llm=llm, provider_config={}, concurrency=1)
+    assert len(catalog.designs) == 30
+
+
+@pytest.mark.asyncio
+async def test_designs_stay_in_slide_order_regardless_of_completion_order(bri_dumps: tuple) -> None:
+    """Concurrency must not reorder the catalog: the admin reviews it against
+    the deck, slide 1 first."""
+    import asyncio
+    import random
+
+    class JitteryLlm(FakeLlm):
+        async def catalog_template(self, *, slide_dump_text, slide_indexes, provider_config, model_override=None):
+            await asyncio.sleep(random.uniform(0, 0.03))  # noqa: S311 -- test jitter, not crypto
+            return await super().catalog_template(
+                slide_dump_text=slide_dump_text,
+                slide_indexes=slide_indexes,
+                provider_config=provider_config,
+                model_override=model_override,
+            )
+
+    catalog, _ = await catalog_template(dumps=bri_dumps, llm=JitteryLlm(), provider_config={}, concurrency=4)
+    assert [d.slide_index for d in catalog.designs] == list(range(30))
+
+
 def test_derive_capacity_counts_distinct_item_groups() -> None:
     anchors = [
         Anchor(anchor_id="1", purpose="item_1_title"),

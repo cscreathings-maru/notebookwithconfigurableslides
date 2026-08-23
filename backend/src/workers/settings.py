@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from arq import func
 from arq.connections import RedisSettings
 
 from ..core.config import get_settings
@@ -33,7 +34,16 @@ async def _on_startup(ctx: dict) -> None:
 class WorkerSettings:
     """Referenced by `arq src.workers.WorkerSettings` in docker-compose."""
 
-    functions = [run_ingest, run_generate, run_catalog_template]
+    # Cataloguing gets its own, longer ceiling. It is one LLM call per batch
+    # of slides -- nine calls for the BRI template -- and Arq's 300s default
+    # killed it two thirds of the way through with nothing persisted
+    # (production, 2026-08-23). Raised per-function rather than globally so a
+    # genuinely hung ingest still fails fast.
+    #
+    # 900s deliberately sits below `reconcile._RUNNING_STALE_AFTER` (30 min):
+    # a job must never be able to outlive the point where the reconciler
+    # presumes it dead and re-enqueues it alongside the copy still running.
+    functions = [run_ingest, run_generate, func(run_catalog_template, timeout=900)]
     on_startup = _on_startup
     redis_settings = RedisSettings.from_dsn(get_settings().redis_url)
     max_tries = get_settings().engine_max_retries
